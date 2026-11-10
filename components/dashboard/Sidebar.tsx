@@ -5,6 +5,7 @@ import { computeCourseAbbreviations, pruneCourseTitle } from '../../utils/course
 import { StudentSwitcher } from './StudentSwitcher';
 import { CourseCustomizationModal } from './CourseCustomizationModal';
 import { CourseCustomization } from '../../services/courseCustomization';
+import { getGradeStyle } from '../../services/gradeScale';
 
 interface SidebarProps {
   data: CourseData[];
@@ -60,7 +61,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const sidebarCourses = useMemo(() => {
     let courses = [...data];
 
-    if (!showHiddenCourses) {
+    const hasFavorites = data.some(c => c.course.is_favorite);
+    if (!showHiddenCourses && hasFavorites) {
       courses = courses.filter(c => c.course.is_favorite);
     }
 
@@ -143,7 +145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   }, [sidebarCourses, visibleCourseIds]);
 
   return (
-    <div className={`${isCollapsed ? 'w-20' : 'w-64'} h-full bg-white border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out z-30 relative`}>
+    <div data-tutorial="sidebar-container" className={`${isCollapsed ? 'w-20' : 'w-64'} h-full bg-white border-r border-slate-200 flex flex-col transition-all duration-300 ease-in-out z-30 relative`}>
       {/* Reserved Student Profile Spot in Top-Left Corner */}
       {onSwitchStudent && (
         <div className={`px-3 py-2.5 border-b border-slate-200/80 bg-slate-50/80 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between gap-1'} shrink-0`}>
@@ -471,11 +473,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </button>
                   </div>
 
-                  {item.enrollment?.grades.current_grade && showScores && (
-                      <div className="mt-2 inline-block px-2 py-0.5 bg-green-100 text-green-700 text-xs font-bold rounded-full">
-                      Grade: {item.enrollment.grades.current_grade}
+                  {showScores && (() => {
+                    const officialScore = item.enrollment?.grades.current_score;
+                    const officialGrade = item.enrollment?.grades.current_grade;
+
+                    // If neither official score nor letter grade exists, no data
+                    if ((officialScore === null || officialScore === undefined) && !officialGrade) {
+                      return null;
+                    }
+
+                    // Score is numeric (could be 0!)
+                    const hasNumScore = typeof officialScore === 'number' && !isNaN(officialScore);
+                    const style = hasNumScore
+                      ? getGradeStyle(officialScore, 100, undefined, { isCourseGrade: true })
+                      : { className: 'bg-slate-100 text-slate-700 border border-slate-200', style: {} };
+
+                    return (
+                      <div 
+                        className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-full border shadow-2xs"
+                        style={style.style}
+                      >
+                        <span>{officialGrade || (hasNumScore ? `${officialScore}%` : '-')}</span>
+                        {hasNumScore && officialGrade && (
+                          <span className="text-[10px] opacity-80">({officialScore}%)</span>
+                        )}
                       </div>
-                  )}
+                    );
+                  })()}
               </>
             )}
           </div>

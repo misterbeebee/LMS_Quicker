@@ -237,3 +237,19 @@ export function saveCourseOrder(order: number[], studentId?: string): void {
     console.error('Failed to save course order', e);
   }
 }
+
+export function saveCourseCustomizationsBulk(
+  customizations: Record<number, CourseCustomization>,
+  studentId?: string
+): Record<number, CourseCustomization> {
+  try {
+    const key = `${STORAGE_KEY_PREFIX}${studentId || 'default'}`;
+    const current = getCourseCustomizations(studentId);
+    const merged = { ...current, ...customizations };
+    localStorage.setItem(key, JSON.stringify(merged));
+    return merged;
+  } catch (e) {
+    console.error('Failed to save bulk course customizations', e);
+    return customizations;
+  }
+}

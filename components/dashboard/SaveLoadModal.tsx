@@ -1,8 +1,9 @@
 
 
-import React, { useState, useEffect } from 'react';
-import { X, FileJson, Loader2, DownloadCloud, Clock, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, FileJson, Loader2, DownloadCloud, Clock, RefreshCw, Download, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import { listSaveStates, SAVES_FOLDER } from '../../services/canvas';
+import { UserSettings } from '../../types';
 
 interface SaveLoadModalProps {
   isOpen: boolean;
@@ -11,17 +12,22 @@ interface SaveLoadModalProps {
   domain: string;
   token: string;
   useProxy: boolean;
+  onExportSettings?: () => void;
+  onImportSettings?: (settings: UserSettings) => void;
 }
 
 export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({ 
-    isOpen, onClose, onLoadFile, domain, token, useProxy 
+    isOpen, onClose, onLoadFile, domain, token, useProxy, onExportSettings, onImportSettings
 }) => {
   const [files, setFiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       loadFiles();
+      setImportStatus(null);
     }
   }, [isOpen]);
 
@@ -144,6 +150,77 @@ export const SaveLoadModal: React.FC<SaveLoadModalProps> = ({
                </div>
            )}
         </div>
+
+        {/* Manual JSON Backup & Cross-Device Sync Footer */}
+        <div className="p-4 bg-slate-50 border-t border-slate-200 rounded-b-xl flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+          <div className="flex items-center gap-2 text-slate-500">
+            <FileJson className="w-4 h-4 text-indigo-500" />
+            <span className="font-medium text-slate-700">Manual Device Transfer:</span>
+            <span>Export or import raw settings JSON directly.</span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                  try {
+                    const text = event.target?.result as string;
+                    const parsed = JSON.parse(text) as UserSettings;
+                    if (!parsed || typeof parsed !== 'object') {
+                      throw new Error('Invalid JSON format');
+                    }
+                    if (onImportSettings) {
+                      onImportSettings(parsed);
+                      setImportStatus('Settings imported successfully!');
+                      setTimeout(() => {
+                        onClose();
+                      }, 1200);
+                    }
+                  } catch (err: any) {
+                    setImportStatus('Failed to parse file: ' + (err?.message || 'Invalid format'));
+                  }
+                };
+                reader.readAsText(file);
+              }}
+            />
+
+            {onExportSettings && (
+              <button
+                type="button"
+                onClick={onExportSettings}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-medium transition flex items-center gap-1.5 shadow-2xs"
+                title="Download settings JSON to transfer to another device"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-500" /> Export JSON
+              </button>
+            )}
+
+            {onImportSettings && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-medium transition flex items-center gap-1.5 shadow-2xs"
+                title="Upload settings JSON from another device"
+              >
+                <Upload className="w-3.5 h-3.5 text-indigo-600" /> Import JSON
+              </button>
+            )}
+          </div>
+        </div>
+
+        {importStatus && (
+          <div className={`px-4 py-2 text-xs font-medium flex items-center gap-2 border-t ${importStatus.includes('success') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+            {importStatus.includes('success') ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+            {importStatus}
+          </div>
+        )}
       </div>
     </div>
   );

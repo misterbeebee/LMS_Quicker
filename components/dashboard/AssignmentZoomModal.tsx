@@ -16,9 +16,14 @@ import {
   MapPin,
   RefreshCw,
   Maximize2,
-  Check
+  Check,
+  Settings,
+  Languages
 } from 'lucide-react';
 import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, getAssignmentLockInfo, linkifyHtml, getAssignmentFeedbackComments } from '../../utils/dashboard-helpers';
+import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
+import { TranslationModal } from './TranslationModal';
+import { detectWorldLanguage } from '../../services/translation';
 
 interface AssignmentZoomModalProps {
   assignment: CanvasAssignment | null;
@@ -30,6 +35,8 @@ interface AssignmentZoomModalProps {
   acknowledgedFeedbackIds?: Set<string | number>;
   onToggleAcknowledgeComment?: (commentId: string | number) => void;
   onAcknowledgeAllComments?: (commentIds: (string | number)[]) => void;
+  gradeConfig?: GradeScaleConfig;
+  onOpenGradeSettings?: () => void;
 }
 
 export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
@@ -41,7 +48,9 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   onClose,
   acknowledgedFeedbackIds,
   onToggleAcknowledgeComment,
-  onAcknowledgeAllComments
+  onAcknowledgeAllComments,
+  gradeConfig = DEFAULT_GRADE_CONFIG,
+  onOpenGradeSettings
 }) => {
   if (!assignment) return null;
 
@@ -250,14 +259,43 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="text-slate-400">Status:</span>
               {isSubmitted ? (
-                <span className="text-emerald-800 font-medium inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  {score !== null && score !== undefined 
-                    ? `Graded: ${score}/${assignment.points_possible}` 
-                    : (isPresumedCompleted(assignment).presumed 
+                score !== null && score !== undefined ? (
+                  (() => {
+                    const style = getGradeStyle(score, assignment.points_possible, gradeConfig, { isCourseGrade: false });
+                    return (
+                      <span 
+                        className="font-medium inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs group/grade relative"
+                        style={style.style}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>Graded: {score}/{assignment.points_possible}</span>
+                        {onOpenGradeSettings && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onOpenGradeSettings();
+                            }}
+                            className="p-0.5 text-slate-400 hover:text-slate-700 bg-white/80 rounded-full border border-slate-200/80 shadow-2xs opacity-0 group-hover/grade:opacity-100 transition-opacity ml-0.5 cursor-pointer"
+                            title="Configure grade threshold colors"
+                          >
+                            <Settings className="w-3 h-3" />
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })()
+                ) : (
+                  <span className="text-emerald-800 font-medium inline-flex items-center gap-1 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>
+                      {isPresumedCompleted(assignment).presumed 
                         ? (isPresumedCompleted(assignment).reason === 'zero_points' ? 'Presumed Complete (0 pts)' : 'Presumed Complete (External)') 
-                        : 'Submitted')}
-                </span>
+                        : 'Submitted'}
+                    </span>
+                  </span>
+                )
               ) : (
                 <span className="text-amber-800 font-medium bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 inline-flex items-center gap-1">
                   {getAssignmentLockInfo(assignment).isLockedUntil ? (
@@ -451,9 +489,35 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                     {submission?.graded_at && (
                       <div className="flex items-center justify-between text-xs text-slate-600 pt-2 border-t border-slate-200">
                         <span>Graded on {new Date(submission.graded_at).toLocaleDateString()}</span>
-                        <span className="font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60">
-                          Grade: {submission.score} / {assignment.points_possible} {submission.grade ? `(${submission.grade})` : ''}
-                        </span>
+                        {(() => {
+                          const subScore = submission.score;
+                          const style = getGradeStyle(subScore, assignment.points_possible, gradeConfig, { isCourseGrade: false });
+                          return (
+                            <div className="group/subGrade relative inline-flex items-center gap-1">
+                              <span 
+                                className="font-bold px-2 py-0.5 rounded border inline-flex items-center gap-1"
+                                style={style.style}
+                              >
+                                <span>Grade: {submission.score} / {assignment.points_possible}</span>
+                                {submission.grade ? `(${submission.grade})` : `(${style.letter})`}
+                              </span>
+                              {onOpenGradeSettings && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onOpenGradeSettings();
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-slate-700 bg-white/80 rounded-full border border-slate-200/80 shadow-2xs opacity-0 group-hover/subGrade:opacity-100 transition-opacity cursor-pointer"
+                                  title="Configure grade threshold colors"
+                                >
+                                  <Settings className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                     {(detail?.score_statistics?.mean !== undefined || assignment.score_statistics?.mean !== undefined) && (

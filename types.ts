@@ -65,6 +65,14 @@ export interface UserSettings {
     columnFilters: Record<string, string[]>; // Stored as arrays for JSON serialization
     filterModes?: Record<string, FilterMode>;
   };
+  courseCustomizations?: Record<number, { abbreviation?: string; emoji?: string }>;
+  courseOrder?: number[];
+  gradeScaleConfig?: {
+    greenMin: number;
+    yellowMin: number;
+    orangeMin: number;
+    enableBlending: boolean;
+  };
 }
 
 // Canvas API Types (Simplified)

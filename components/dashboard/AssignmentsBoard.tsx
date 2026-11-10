@@ -1,11 +1,20 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { CanvasAssignment } from '../../types';
-import { Calendar, AlertCircle, Clock, ArrowRight, AlertTriangle, CheckCircle2, Lock, FileCheck, Archive, ArchiveRestore, HelpCircle, MessageSquare, BookOpen, MapPin, Maximize2, Check, FileText } from 'lucide-react';
+import { CanvasAssignment, CanvasTodoItem } from '../../types';
+import { 
+  Calendar, AlertCircle, Clock, ArrowRight, AlertTriangle, CheckCircle2, 
+  Lock, FileCheck, Archive, ArchiveRestore, HelpCircle, MessageSquare, 
+  BookOpen, MapPin, Maximize2, Check, FileText, Settings, Languages, Globe,
+  ChevronDown, ChevronRight, Megaphone, Loader2, ExternalLink
+} from 'lucide-react';
 import { getAssignmentStatus, stripHtml, isAssignmentSubmitted, getScoreStyle, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments } from '../../utils/dashboard-helpers';
+import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentZoomModal } from './AssignmentZoomModal';
+import { TranslationModal } from './TranslationModal';
+import { detectWorldLanguage, WorldLanguageMatch } from '../../services/translation';
 import { CourseCustomization } from '../../services/courseCustomization';
+import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 
 interface AssignmentsBoardProps {
   assignments: CanvasAssignment[];
@@ -29,6 +38,10 @@ interface AssignmentsBoardProps {
   filterFeedbackOnly?: boolean;
   onToggleFilterFeedback?: (val: boolean) => void;
   showClassAverages?: boolean;
+  gradeConfig?: GradeScaleConfig;
+  onOpenGradeSettings?: () => void;
+  todoItems?: CanvasTodoItem[];
+  onMarkTodoDone?: (item: CanvasTodoItem) => Promise<void>;
 }
 
 export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({ 
@@ -52,11 +65,38 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
   onAcknowledgeAllComments,
   filterFeedbackOnly = false,
   onToggleFilterFeedback,
-  showClassAverages = false
+  showClassAverages = false,
+  gradeConfig = DEFAULT_GRADE_CONFIG,
+  onOpenGradeSettings,
+  todoItems = [],
+  onMarkTodoDone
 }) => {
+  const [workflowSection, setWorkflowSection] = useState<'upcoming' | 'completed'>('upcoming');
+  const [isTodoExpanded, setIsTodoExpanded] = useState(true);
+  const [processingTodoKey, setProcessingTodoKey] = useState<string | null>(null);
   const [zoomedAssignment, setZoomedAssignment] = useState<CanvasAssignment | null>(null);
   const [confirmingBoardAckAll, setConfirmingBoardAckAll] = useState(false);
   const [localFilterFeedback, setLocalFilterFeedback] = useState(false);
+  const [itemTypeFilter, setItemTypeFilter] = useState<'all' | 'assignments' | 'events'>('all');
+  const [translatingItem, setTranslatingItem] = useState<{
+    assignmentTitle: string;
+    assignmentDescription?: string;
+    courseName: string;
+    languageMatch: WorldLanguageMatch;
+  } | null>(null);
+
+  const handleTodoDone = async (item: CanvasTodoItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onMarkTodoDone) return;
+    const key = item.ignore || item.html_url;
+    setProcessingTodoKey(key);
+    try {
+      await onMarkTodoDone(item);
+    } finally {
+      setProcessingTodoKey(null);
+    }
+  };
+
   const activeFilterFeedback = onToggleFilterFeedback ? filterFeedbackOnly : localFilterFeedback;
   const toggleFeedbackFilter = onToggleFilterFeedback ? () => onToggleFilterFeedback(!filterFeedbackOnly) : () => setLocalFilterFeedback(!localFilterFeedback);
 
@@ -106,6 +146,10 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     };
 
     assignments.forEach(a => {
+      // Item Type filter: All / Assignments Only / Events Only
+      if (itemTypeFilter === 'assignments' && a.is_calendar_event) return;
+      if (itemTypeFilter === 'events' && !a.is_calendar_event) return;
+
       // Feedback filter: if active, show only items with unacknowledged feedback
       if (activeFilterFeedback && !hasUnacknowledgedFeedback(a, acknowledgedFeedbackIds || new Set())) {
         return;
@@ -149,7 +193,12 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       const lockInfo = getAssignmentLockInfo(a);
 
       if (due < now) {
-         buckets.overdue.push(a);
+         if (a.is_calendar_event) {
+           // Past calendar events are completed sessions, not missing homework
+           buckets.completed.push(a);
+         } else {
+           buckets.overdue.push(a);
+         }
       } else if (due < dueSoonThreshold) {
         // Assignments locked until a future date cannot be worked on right now.
         // Don't show in "Up Next" (today); push back to "thisWeek" (or "later")
@@ -232,7 +281,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     buckets.later.sort(dateSort);
 
     return buckets;
-  }, [assignments, limitCompletedToRecent, archivedAssignmentIds, showArchived, showSubmitted, showObsolete, activeFilterFeedback, acknowledgedFeedbackIds]);
+  }, [assignments, limitCompletedToRecent, archivedAssignmentIds, showArchived, showSubmitted, showObsolete, activeFilterFeedback, acknowledgedFeedbackIds, itemTypeFilter]);
 
   // Fix: Cast 'arr' to CanvasAssignment[] to access .length safely
   const isEmpty = Object.values(grouped).every((arr) => (arr as CanvasAssignment[]).length === 0);
@@ -280,51 +329,35 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     
     const hasScore = a.submission?.score !== null && a.submission?.score !== undefined;
     let scoreBadge: { className: string; style?: React.CSSProperties } = { className: 'bg-slate-50 text-slate-500 border border-slate-200', style: {} };
+    const customGradeStyle = hasScore ? getGradeStyle(a.submission!.score, a.points_possible, gradeConfig, { isCourseGrade: false }) : { className: '', style: {}, letter: '' };
     
     if (hasScore && showScores) {
         scoreBadge = getScoreStyle(a.submission!.score, a.points_possible);
     }
 
-    // Determine the "Display Date" for completed items
+    // Determine the "Display Date" for completed items (Due date or Submitted date; score & 0 pts belong in top-right score entity)
     let completedDateLabel = status.label;
     if (presumed.presumed) {
-        if (presumed.reason === 'zero_points') {
-            completedDateLabel = a.due_at 
-              ? `0 pts • Due ${new Date(a.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` 
-              : 'Completed (0 pts)';
-        } else if (presumed.reason === 'locked_external') {
-            completedDateLabel = a.due_at 
-              ? `External • Due ${new Date(a.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` 
-              : 'Presumed Complete (External)';
-        }
+        completedDateLabel = a.due_at 
+          ? `Due ${new Date(a.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` 
+          : 'Completed';
     } else if (variant === 'green' && isAssignmentSubmitted(a)) {
         const sub = a.submission;
-        let latestTime = 0;
-        let latestLabel = 'Submitted';
+        let latestLabel = a.due_at 
+          ? `Due ${new Date(a.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}` 
+          : 'Submitted';
         
         if (sub?.submitted_at) {
-            const t = new Date(sub.submitted_at).getTime();
-            if (t > latestTime) { latestTime = t; latestLabel = `Submitted ${new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'})}`; }
-        }
-        if (sub?.graded_at) {
-             const t = new Date(sub.graded_at).getTime();
-             if (t > latestTime) { latestTime = t; latestLabel = `Graded ${new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'})}`; }
-        }
-        if (sub?.submission_comments && sub.submission_comments.length > 0) {
-             // Find last comment
-             const lastC = sub.submission_comments.sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime())[0];
-             const t = new Date(lastC.created_at).getTime();
-             if (t > latestTime) { latestTime = t; latestLabel = `Commented ${new Date(t).toLocaleDateString(undefined, {month:'short', day:'numeric'})}`; }
-        }
-        
-        if (latestTime > 0) {
-            completedDateLabel = latestLabel;
+            latestLabel = `Submitted ${new Date(sub.submitted_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
         } else if (a.manual_marked_submitted) {
-            completedDateLabel = "Marked Done";
+            latestLabel = "Marked Done";
         }
+        completedDateLabel = latestLabel;
     }
 
+    const courseName = getCourseName(a.course_id);
     const customCourse = courseCustomizations?.[a.course_id];
+    const langMatch = detectWorldLanguage(courseName);
 
     return (
       <div 
@@ -339,14 +372,33 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
             <span 
               className="font-bold text-slate-700 uppercase tracking-wider truncate max-w-[170px]" 
-              title={getCourseName(a.course_id)}
+              title={courseName}
             >
-              {customCourse?.emoji ? `${customCourse.emoji} ` : ''}{getCourseName(a.course_id)}
+              {customCourse?.emoji ? `${customCourse.emoji} ` : ''}{courseName}
             </span>
             {a.is_calendar_event && (
               <span className="text-[10px] font-bold text-purple-700 flex items-center gap-0.5 shrink-0">
                 <Calendar className="w-3 h-3" /> Event
               </span>
+            )}
+            {langMatch.isLanguageCourse && !a.is_calendar_event && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTranslatingItem({
+                    assignmentTitle: a.name,
+                    assignmentDescription: a.description || '',
+                    courseName,
+                    languageMatch: langMatch
+                  });
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 transition cursor-pointer shrink-0 shadow-2xs"
+                title={`Translate ${langMatch.languageName} assignment to English`}
+              >
+                <Languages className="w-3 h-3 text-indigo-600" />
+                <span>{langMatch.badgeText}</span>
+              </button>
             )}
             {lockInfo.isLockedUntil ? (
               <span 
@@ -373,7 +425,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             )}
           </div>
 
-          {/* Subwidgets bonded flush to top-right: pts pill & archive button */}
+            {/* Subwidgets bonded flush to top-right: pts pill & archive button */}
           <div className="flex items-center gap-1.5 shrink-0">
             {showClassAverages && a.points_possible > 0 && a.score_statistics?.mean !== undefined && a.score_statistics.mean !== null && (
               <span 
@@ -383,13 +435,55 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                 Avg {Math.round(a.score_statistics.mean * 10) / 10}
               </span>
             )}
-            {a.points_possible > 0 && (
-              <span 
-                className={`text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${scoreBadge.className}`}
-                style={scoreBadge.style}
-              >
-                {hasScore && showScores ? `${a.submission!.score} / ${a.points_possible}` : `${a.points_possible} pts`}
-              </span>
+            {/* Score / Points / Graded Date entity */}
+            {!a.is_calendar_event && (
+              <div className="relative group/score inline-flex items-center">
+                {hasScore && showScores ? (
+                  <>
+                    <span 
+                      className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap inline-flex items-center gap-1"
+                      style={customGradeStyle.style}
+                      title={`Score: ${a.submission!.score} / ${a.points_possible}`}
+                    >
+                      <span>
+                        {a.submission!.score} / {a.points_possible}
+                      </span>
+                    </span>
+                    {onOpenGradeSettings && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onOpenGradeSettings();
+                        }}
+                        className="p-0.5 text-slate-400 hover:text-slate-700 bg-white/80 rounded-full border border-slate-200/80 shadow-2xs opacity-0 group-hover/score:opacity-100 transition-opacity ml-0.5 cursor-pointer"
+                        title="Configure grade threshold colors"
+                      >
+                        <Settings className="w-3 h-3" />
+                      </button>
+                    )}
+                  </>
+                ) : (hasScore || a.submission?.graded_at) && !showScores ? (
+                  // Graded date in the exact same place as score when score display is disabled
+                  <span 
+                    className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap bg-emerald-50 text-emerald-800 border border-emerald-200/80"
+                    title={a.submission?.graded_at ? `Graded on ${new Date(a.submission.graded_at).toLocaleDateString()}` : "Graded"}
+                  >
+                    {a.submission?.graded_at 
+                      ? `Graded ${new Date(a.submission.graded_at).toLocaleDateString(undefined, {month:'short', day:'numeric'})}` 
+                      : 'Graded'}
+                  </span>
+                ) : (a.points_possible !== undefined && a.points_possible !== null) ? (
+                  // Points possible entity (including 0 pts)
+                  <span 
+                    className={`text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${scoreBadge.className}`}
+                    style={scoreBadge.style}
+                  >
+                    {a.points_possible} pts
+                  </span>
+                ) : null}
+              </div>
             )}
             {onToggleArchived && (
               <button 
@@ -535,15 +629,112 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     );
   }
 
+  const totalEventsCount = useMemo(() => {
+    return assignments.filter(a => !!a.is_calendar_event).length;
+  }, [assignments]);
+
+  const totalAssignmentsCount = useMemo(() => {
+    return assignments.filter(a => !a.is_calendar_event).length;
+  }, [assignments]);
+
+  const upcomingCount = useMemo(() => {
+    return grouped.overdue.length + grouped.today.length + grouped.thisWeek.length + grouped.later.length + grouped.noDate.length;
+  }, [grouped]);
+
+  const completedCount = useMemo(() => {
+    return grouped.completed.length;
+  }, [grouped]);
+
   return (
     <>
-      {/* Board Feedback Filter Bar */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
+      {/* Primary Workflow Sub-Tab & Item Filters Bar */}
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3 pb-3 border-b border-slate-200">
+        {/* Primary Workflow Selector: Upcoming vs Completed */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200/80 shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setWorkflowSection('upcoming')}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-2 ${
+              workflowSection === 'upcoming'
+                ? 'bg-white text-blue-700 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Upcoming & Active</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+              workflowSection === 'upcoming' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {upcomingCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setWorkflowSection('completed')}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-2 ${
+              workflowSection === 'completed'
+                ? 'bg-white text-emerald-800 shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Completed & Graded</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+              workflowSection === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+            }`}>
+              {completedCount}
+            </span>
+          </button>
+        </div>
+
+        {/* Secondary Filter Controls */}
+        <div className="flex items-center flex-wrap gap-2">
+          {/* Segmented Filter: All / Assignments / Events */}
+          <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200/60 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => setItemTypeFilter('all')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                itemTypeFilter === 'all' 
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold' 
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              All Items ({assignments.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setItemTypeFilter('assignments')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                itemTypeFilter === 'assignments' 
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold' 
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Assignments ({totalAssignmentsCount})
+            </button>
+            {totalEventsCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setItemTypeFilter('events')}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                  itemTypeFilter === 'events' 
+                    ? 'bg-purple-600 text-white shadow-2xs font-bold' 
+                    : 'text-purple-700 hover:text-purple-900'
+                }`}
+                title="Show only live calendar events"
+              >
+                <Calendar className="w-3 h-3" />
+                <span>Events ({totalEventsCount})</span>
+              </button>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={toggleFeedbackFilter}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl border transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition cursor-pointer ${
               activeFilterFeedback 
                 ? 'bg-blue-600 text-white border-blue-600 shadow-xs' 
                 : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -560,14 +751,10 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
               </span>
             )}
           </button>
-          {activeFilterFeedback && (
-            <span className="text-xs text-blue-700 font-medium bg-blue-50 px-2.5 py-1 rounded-lg">
-              Showing assignments with feedback ({(Object.values(grouped) as any[][]).reduce((acc: number, curr: any[]) => acc + curr.length, 0)})
-            </span>
-          )}
         </div>
       </div>
 
+      {/* FEEDBACK FILTER OVERRIDE VIEW */}
       {activeFilterFeedback ? (
         <div className="space-y-4 animate-fadeIn">
           <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
@@ -645,76 +832,208 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             </div>
           )}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          
-          {/* Column 1: Overdue & Past */}
-          <div className="lg:col-span-1 space-y-6">
-            {grouped.overdue.length > 0 && (
-                <div className="space-y-3 animate-fadeIn">
-                    <h3 className="text-sm font-bold text-red-600 flex items-center gap-2 uppercase tracking-wide">
-                        <AlertCircle className="w-4 h-4" /> Past due ({grouped.overdue.length})
-                    </h3>
-                    <div className="flex flex-col gap-3">
-                        {grouped.overdue.map(a => renderCard(a, 'red'))}
-                    </div>
-                </div>
-            )}
-          </div>
-
-          {/* Column 2: Due Soon / Up Next */}
-          <div className="lg:col-span-1 space-y-6">
-            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
-                <Clock className="w-4 h-4 text-slate-400" /> Up Next (2 days)
-            </h3>
-            {grouped.today.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">Nothing due in the next 2 days.</p>
-            ) : (
-                <div className="flex flex-col gap-3 animate-fadeIn">
-                    {grouped.today.map(a => renderCard(a, 'orange'))}
-                </div>
-            )}
-          </div>
-
-          {/* Column 3: This Week */}
-          <div className="lg:col-span-1 space-y-6">
-            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
-                <Calendar className="w-4 h-4 text-slate-400" /> This Week
-            </h3>
-            {grouped.thisWeek.length === 0 ? (
-                <p className="text-sm text-slate-400 italic">Nothing else due this week.</p>
-            ) : (
-                <div className="flex flex-col gap-3 animate-fadeIn">
-                    {grouped.thisWeek.map(a => renderCard(a, 'blue'))}
-                </div>
-            )}
-          </div>
-
-          {/* Column 4: Later & Completed */}
-          <div className="lg:col-span-1 space-y-6">
-            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
-                <ArrowRight className="w-4 h-4 text-slate-400" /> Later & Undated
-            </h3>
-            <div className="flex flex-col gap-3 animate-fadeIn">
-                {grouped.later.map(a => renderCard(a, 'gray'))}
-                {grouped.noDate.map(a => renderCard(a, 'gray'))}
-                {grouped.later.length === 0 && grouped.noDate.length === 0 && (!showSubmitted || grouped.completed.length === 0) && (
-                    <p className="text-sm text-slate-400 italic">No upcoming assignments.</p>
-                )}
+      ) : workflowSection === 'completed' ? (
+        /* DEDICATED COMPLETED & GRADED WORKSPACE */
+        <div className="space-y-4 animate-fadeIn">
+          <div className="flex items-center justify-between bg-slate-50/80 px-4 py-3 rounded-xl border border-slate-200/90 gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-emerald-100 text-emerald-800">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-xs text-slate-800">
+                  Completed & Graded Coursework ({grouped.completed.length})
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Review submitted deliverables, teacher comments, rubrics, and grade evaluations
+                </p>
+              </div>
             </div>
 
-            {showSubmitted && grouped.completed.length > 0 && (
-                 <div className="space-y-3 pt-4 border-t border-slate-200 animate-fadeIn">
-                    <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Completed ({grouped.completed.length})
-                    </h3>
-                    <div className="flex flex-col gap-3">
-                        {grouped.completed.map(a => renderCard(a, 'green'))}
-                    </div>
-                 </div>
-            )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+                {grouped.completed.filter(a => a.submission?.score !== null && a.submission?.score !== undefined).length} with recorded scores
+              </span>
+            </div>
           </div>
 
+          {grouped.completed.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 border-dashed">
+              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
+              <h4 className="font-bold text-sm text-slate-800">No Completed Coursework Found</h4>
+              <p className="text-xs text-slate-500 mt-1">When you submit assignments or your teacher enters grades, they will appear in this review log.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {grouped.completed.map(a => renderCard(a, 'green'))}
+            </div>
+          )}
+        </div>
+      ) : (
+        /* UPCOMING & ACTIVE WORKSPACE */
+        <div className="space-y-5 animate-fadeIn">
+          {/* Integrated Canvas Priority To-Do Section */}
+          {todoItems && todoItems.length > 0 && (
+            <div className="bg-gradient-to-r from-blue-50/60 via-indigo-50/40 to-slate-50/60 border border-blue-200/80 rounded-2xl p-4 shadow-2xs">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-2xs">
+                    <Megaphone className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-xs text-slate-800">Canvas Priority To-Do</h3>
+                      <span className="text-[10px] font-bold px-1.5 py-0.2 bg-blue-100 text-blue-700 rounded-full border border-blue-200/60">
+                        {todoItems.length} {todoItems.length === 1 ? 'task' : 'tasks'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">Official Canvas planner items prioritized for your immediate attention</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsTodoExpanded(!isTodoExpanded)}
+                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 px-2.5 py-1 rounded-md hover:bg-white/80 transition cursor-pointer"
+                >
+                  <span>{isTodoExpanded ? 'Collapse' : 'Show All'}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isTodoExpanded ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+
+              {isTodoExpanded && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-fadeIn">
+                  {todoItems.map((item, idx) => {
+                    const uniqueKey = item.ignore || item.html_url || String(idx);
+                    const title = item.assignment?.name || item.quiz?.title || 'Canvas ToDo';
+                    const courseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+                    const dueAt = item.assignment?.due_at || null;
+                    const points = item.assignment?.points_possible;
+                    const isProcessing = processingTodoKey === uniqueKey;
+
+                    return (
+                      <div
+                        key={uniqueKey}
+                        className="p-3 rounded-xl border border-blue-200/70 bg-white shadow-2xs hover:shadow-xs transition flex flex-col justify-between gap-2.5"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[140px]">
+                              {courseName}
+                            </span>
+                            {points !== undefined && (
+                              <span className="text-[10px] font-semibold text-slate-500">
+                                {points} pts
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug" title={title}>
+                            {title}
+                          </h4>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
+                          <span className="flex items-center gap-1 text-slate-600">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
+                          </span>
+
+                          <div className="flex items-center gap-1.5">
+                            {item.html_url && (
+                              <a
+                                href={item.html_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1 text-slate-400 hover:text-blue-600 rounded transition"
+                                title="Open in Canvas"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                            {onMarkTodoDone && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleTodoDone(item, e)}
+                                disabled={isProcessing}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition cursor-pointer"
+                                title="Mark as done and dismiss from Canvas To-Do"
+                              >
+                                {isProcessing ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                                ) : (
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                )}
+                                <span>Done</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 4 Active Due Date Planning Lanes */}
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Column 1: Overdue & Past */}
+            <div className="lg:col-span-1 space-y-6">
+              <h3 className="text-sm font-bold text-red-600 flex items-center gap-2 uppercase tracking-wide">
+                <AlertCircle className="w-4 h-4" /> Past due ({grouped.overdue.length})
+              </h3>
+              {grouped.overdue.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">No overdue work!</p>
+              ) : (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  {grouped.overdue.map(a => renderCard(a, 'red'))}
+                </div>
+              )}
+            </div>
+
+            {/* Column 2: Due Soon / Up Next */}
+            <div className="lg:col-span-1 space-y-6">
+              <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
+                <Clock className="w-4 h-4 text-slate-400" /> Up Next (2 days)
+              </h3>
+              {grouped.today.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">Nothing due in the next 2 days.</p>
+              ) : (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  {grouped.today.map(a => renderCard(a, 'orange'))}
+                </div>
+              )}
+            </div>
+
+            {/* Column 3: This Week */}
+            <div className="lg:col-span-1 space-y-6">
+              <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
+                <Calendar className="w-4 h-4 text-slate-400" /> This Week
+              </h3>
+              {grouped.thisWeek.length === 0 ? (
+                <p className="text-sm text-slate-400 italic">Nothing else due this week.</p>
+              ) : (
+                <div className="flex flex-col gap-3 animate-fadeIn">
+                  {grouped.thisWeek.map(a => renderCard(a, 'blue'))}
+                </div>
+              )}
+            </div>
+
+            {/* Column 4: Later & Undated */}
+            <div className="lg:col-span-1 space-y-6">
+              <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
+                <ArrowRight className="w-4 h-4 text-slate-400" /> Later & Undated
+              </h3>
+              <div className="flex flex-col gap-3 animate-fadeIn">
+                {grouped.later.map(a => renderCard(a, 'gray'))}
+                {grouped.noDate.map(a => renderCard(a, 'gray'))}
+                {grouped.later.length === 0 && grouped.noDate.length === 0 && (
+                  <p className="text-sm text-slate-400 italic">No upcoming assignments.</p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -729,7 +1048,21 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
         acknowledgedFeedbackIds={acknowledgedFeedbackIds}
         onToggleAcknowledgeComment={onToggleAcknowledgeComment}
         onAcknowledgeAllComments={onAcknowledgeAllComments}
+        gradeConfig={gradeConfig}
+        onOpenGradeSettings={onOpenGradeSettings}
       />
+
+      {/* World Language Translation Modal */}
+      {translatingItem && (
+        <TranslationModal
+          isOpen={true}
+          onClose={() => setTranslatingItem(null)}
+          assignmentTitle={translatingItem.assignmentTitle}
+          assignmentDescription={translatingItem.assignmentDescription}
+          courseName={translatingItem.courseName}
+          languageMatch={translatingItem.languageMatch}
+        />
+      )}
     </>
   );
 };

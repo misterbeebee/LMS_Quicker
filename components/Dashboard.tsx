@@ -17,11 +17,15 @@ import { ModulesList } from './dashboard/ModulesList';
 import { NotesPanel } from './dashboard/NotesPanel';
 import { SaveLoadModal } from './dashboard/SaveLoadModal';
 import { SaveDialog } from './dashboard/SaveDialog';
+import { GradeThresholdModal } from './dashboard/GradeThresholdModal';
+import { InteractiveTutorialModal, TutorialId } from './dashboard/InteractiveTutorialModal';
+import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getSavedGradeConfig, saveGradeConfig } from '../services/gradeScale';
 import { logger } from '../services/logger';
 import { Loader2, Check, AlertCircle } from 'lucide-react';
 import { 
   getCourseCustomizations, 
   saveCourseCustomization, 
+  saveCourseCustomizationsBulk,
   getSavedCourseOrder, 
   saveCourseOrder, 
   CourseCustomization 
@@ -147,6 +151,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
+  const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+  const [activeTutorialId, setActiveTutorialId] = useState<TutorialId>('major_views');
+  const [gradeConfig, setGradeConfig] = useState<GradeScaleConfig>(() => 
+    getSavedGradeConfig(currentStudentId)
+  );
+
+  useEffect(() => {
+    setGradeConfig(getSavedGradeConfig(currentStudentId));
+  }, [currentStudentId]);
   
   // Table State
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
@@ -166,6 +180,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [isRestoring, setIsRestoring] = useState(true); // New state to block render during initial load
   const saveTimerRef = useRef<any>(null);
   const settingsRef = useRef<UserSettings | null>(null); // For unload hook
+  const REMOTE_AUTOSAVE_THROTTLE_MS = 10 * 60 * 1000; // Throttle remote push to once per 10 minutes (600,000ms)
+  const lastRemoteSaveTimeRef = useRef<number>(0);
+  const pendingRemoteContentRef = useRef<string | null>(null);
 
   // Conflict Detection State
   const [lastSyncedTime, setLastSyncedTime] = useState<number>(0);
@@ -235,7 +252,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
              setMarkedAsSubmittedIds(new Set());
           }
 
-          setActiveTab(settings.viewPreferences.activeTab as any);
+          const targetTab = (settings.viewPreferences.activeTab as string) === 'canvas_todo' ? 'assignments' : settings.viewPreferences.activeTab;
+          setActiveTab(targetTab as any);
           if (settings.viewPreferences.assignmentsViewMode) {
               setAssignmentsViewMode(settings.viewPreferences.assignmentsViewMode);
           }
@@ -265,6 +283,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
           if (settings.tableState.filterModes) {
               setFilterModes(settings.tableState.filterModes);
           }
+      }
+
+      // Restore and synchronize course customizations across devices
+      if (settings.courseCustomizations && typeof settings.courseCustomizations === 'object') {
+        const mergedCustomizations = saveCourseCustomizationsBulk(settings.courseCustomizations, currentStudentId);
+        setCourseCustomizations(mergedCustomizations);
+      }
+
+      // Restore and synchronize course drag ordering across devices
+      if (settings.courseOrder && Array.isArray(settings.courseOrder)) {
+        saveCourseOrder(settings.courseOrder, currentStudentId);
+        setCourseOrder(settings.courseOrder);
+      }
+
+      // Restore and synchronize custom grade threshold scale across devices
+      if (settings.gradeScaleConfig && typeof settings.gradeScaleConfig === 'object') {
+        const mergedGradeConfig = saveGradeConfig(settings.gradeScaleConfig, currentStudentId);
+        setGradeConfig(mergedGradeConfig);
       }
   };
 
@@ -365,6 +401,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
       } catch (e: any) {
           logger.error("Failed to load selected file", e.message);
       }
+  };
+
+  const handleExportSettingsJson = () => {
+    try {
+      const current = compileSettings();
+      const blob = new Blob([JSON.stringify(current, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `canvas_dashboard_settings_${currentStudentId || 'profile'}_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      logger.error("Failed to export settings JSON", err?.message);
+    }
   };
 
   // Ensure valid selection on load
@@ -557,32 +610,55 @@ export const Dashboard: React.FC<DashboardProps> = ({
         sortConfig,
         columnFilters: serializedFilters,
         filterModes
-      }
+      },
+      courseCustomizations: getCourseCustomizations(currentStudentId),
+      courseOrder: getSavedCourseOrder(currentStudentId),
+      gradeScaleConfig: gradeConfig
     };
   };
 
-  // Update ref whenever state changes AND trigger debounced autosave
+  // Update ref whenever state changes AND trigger debounced autosave throttled to once per 10 minutes
   useEffect(() => {
       // Don't autosave while we are still restoring state
       if (isRestoring) return;
 
       const settings = compileSettings();
       settingsRef.current = settings;
+      const content = JSON.stringify(settings, null, 2);
+      pendingRemoteContentRef.current = content;
 
-      // Debounced Autosave Logic
-      // 1. Clear any existing pending save
+      // 1. Clear any existing pending save timer
       if (saveTimerRef.current) {
           clearTimeout(saveTimerRef.current);
       }
 
-      // 2. Schedule new save in 10 seconds (10000ms)
-      saveTimerRef.current = setTimeout(() => {
-          logger.info("Autosaving settings due to change...");
-          const now = new Date();
-          const timestamp = now.toISOString().replace(/[:.]/g, '-');
-          // Pass 'false' to performSave to suppress the UI loading spinner if desired for background saves
-          performSave(`auto_save_${timestamp}.json`, false, JSON.stringify(settings, null, 2));
-      }, 10000);
+      // 2. Throttled remote push logic: Max once per 10 minutes to avoid spamming remote storage
+      const now = Date.now();
+      const timeSinceLastPush = now - lastRemoteSaveTimeRef.current;
+
+      const scheduleRemoteSave = (delayMs: number) => {
+        saveTimerRef.current = setTimeout(() => {
+          logger.info("Executing 10-minute throttled remote autosave push to Canvas...");
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          lastRemoteSaveTimeRef.current = Date.now();
+          if (pendingRemoteContentRef.current) {
+            performSave(`auto_save_${timestamp}.json`, false, pendingRemoteContentRef.current);
+          }
+        }, delayMs);
+      };
+
+      if (lastRemoteSaveTimeRef.current === 0) {
+        // Initial change: allow a gentle 15-second idle debounce for first remote push
+        scheduleRemoteSave(15000);
+      } else if (timeSinceLastPush >= REMOTE_AUTOSAVE_THROTTLE_MS) {
+        // More than 10 minutes elapsed: debounce 5 seconds before remote push
+        scheduleRemoteSave(5000);
+      } else {
+        // Less than 10 minutes: throttle to the end of the 10-minute window
+        const remainingDelay = REMOTE_AUTOSAVE_THROTTLE_MS - timeSinceLastPush;
+        logger.info(`Remote autosave throttled. Next remote push in ${Math.round(remainingDelay / 1000)}s`);
+        scheduleRemoteSave(remainingDelay);
+      }
 
       // 3. Cleanup on unmount or dependency change
       return () => {
@@ -660,12 +736,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
       
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 5000);
+      lastRemoteSaveTimeRef.current = Date.now();
+      setTimeout(() => setSaveStatus('idle'), 2200);
 
     } catch (err) {
       logger.error(`Failed to save settings to ${filename}`, err);
       setSaveStatus('error');
-      setTimeout(() => setSaveStatus('idle'), 6000);
+      setTimeout(() => setSaveStatus('idle'), 3500);
     } finally {
       if (showLoadingIndicator) setIsSaving(false);
     }
@@ -781,14 +858,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleSelectAllCourses = () => {
-    const allIds = data
-      .filter(c => showHiddenCourses ? true : c.course.is_favorite)
-      .map(c => c.course.id);
+    const hasFavorites = data.some(c => c.course.is_favorite);
+    const targetCourses = data.filter(c => showHiddenCourses ? true : (hasFavorites ? c.course.is_favorite : true));
+    const allIds = targetCourses.map(c => c.course.id);
     setVisibleCourseIds(new Set(allIds));
+    setSelectedCourseId(ALL_COURSES_ID);
   };
 
   const handleSelectNoneCourses = () => {
     setVisibleCourseIds(new Set());
+    setSelectedCourseId(ALL_COURSES_ID);
   };
 
   const toggleArchived = (id: number) => {
@@ -863,6 +942,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             showCalendarEvents={showCalendarEvents}
             onToggleShowCalendarEvents={setShowCalendarEvents}
             calendarEventsCount={visibleCalendarEventsCount}
+            calendarEvents={calendarEvents}
             hidePastEvents={hidePastEvents}
             onToggleHidePastEvents={setHidePastEvents}
             loadingCalendarEvents={loadingCalendarEvents}
@@ -875,6 +955,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             isSaving={isSaving}
             onOpenLoadModal={() => setIsLoadModalOpen(true)}
             onDebugAutosave={handleDebugAutosave}
+            onOpenGradeSettings={() => setIsGradeModalOpen(true)}
             currentStudentId={currentStudentId}
             currentStudentName={currentStudentName}
             currentDomain={canvasUrl}
@@ -911,41 +992,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {/* Main Content Area */}
                     <div className="animate-fadeIn">
                         {activeTab === 'overview' && (
-                           <div className="space-y-8">
+                           <div className="space-y-6">
                                 <Overview 
-                                    course={selectedCourse} 
+                                    course={selectedCourse}
+                                    allCoursesData={data.filter(c => showHiddenCourses || c.course.is_favorite)}
                                     onNavigate={setActiveTab}
                                     showScores={showScores}
+                                    showCalendarEvents={showCalendarEvents}
+                                    calendarEvents={calendarEvents}
+                                    gradeConfig={gradeConfig}
+                                    onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+                                    courseCustomizations={courseCustomizations}
+                                    onSelectCourse={(courseId) => setSelectedCourseId(courseId)}
+                                    onStartTutorial={(tid) => {
+                                      if (tid) setActiveTutorialId(tid);
+                                      setIsTutorialOpen(true);
+                                    }}
                                 />
-                                {/* Render recent completed assignments in Overview as requested */}
-                                <div>
-                                     <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                         Assignments Snapshot
-                                     </h3>
-                                     <AssignmentsBoard 
-                                        assignments={selectedCourse.assignments}
-                                        getCourseName={getCourseName}
-                                        courseCustomizations={courseCustomizations}
-                                        archivedAssignmentIds={archivedAssignmentIds}
-                                        onToggleArchived={toggleArchived}
-                                        onToggleMarkedSubmitted={toggleMarkedSubmitted}
-                                        showScores={showScores}
-                                        showClassAverages={showClassAverages}
-                                        limitCompletedToRecent={true}
-                                        showArchived={showArchived}
-                                        showSubmitted={showSubmitted}
-                                        showObsolete={showObsolete}
-                                        showIds={showIds}
-                                        canvasUrl={canvasUrl}
-                                        apiKey={apiKey}
-                                        useProxy={useProxy}
-                                        acknowledgedFeedbackIds={acknowledgedFeedbackIds}
-                                        onToggleAcknowledgeComment={handleToggleAcknowledgeComment}
-                                        onAcknowledgeAllComments={handleAcknowledgeAllComments}
-                                        filterFeedbackOnly={filterFeedbackOnly}
-                                        onToggleFilterFeedback={setFilterFeedbackOnly}
-                                     />
-                                </div>
                            </div>
                         )}
 
@@ -972,6 +1035,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     onAcknowledgeAllComments={handleAcknowledgeAllComments}
                                     filterFeedbackOnly={filterFeedbackOnly}
                                     onToggleFilterFeedback={setFilterFeedbackOnly}
+                                    gradeConfig={gradeConfig}
+                                    onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+                                    todoItems={todoItems}
+                                    onMarkTodoDone={handleMarkTodoDone}
                                 />
                              ) : (
                                 <AssignmentsTable 
@@ -1001,6 +1068,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     onAcknowledgeAllComments={handleAcknowledgeAllComments}
                                     filterFeedbackOnly={filterFeedbackOnly}
                                     onToggleFilterFeedback={setFilterFeedbackOnly}
+                                    gradeConfig={gradeConfig}
+                                    onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+                                    todoItems={todoItems}
+                                    onMarkTodoDone={handleMarkTodoDone}
                                 />
                              )
                         )}
@@ -1045,21 +1116,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
              )}
          </main>
 
-         {/* Toasts / Notifications */}
+         {/* Unobtrusive Autosave / Status Pill (packed in corner) */}
          {saveStatus !== 'idle' && (
-             <div className={`fixed bottom-4 left-4 px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 transition-all duration-300 z-50 ${
-                 saveStatus === 'error' ? 'bg-red-600 text-white' : 
-                 saveStatus === 'saved' ? 'bg-green-600 text-white' : 
-                 'bg-slate-800 text-white'
+             <div className={`fixed bottom-3 right-3 px-2.5 py-1.5 rounded-lg shadow-sm border flex items-center gap-2 transition-all duration-300 z-50 text-xs backdrop-blur-xs select-none ${
+                 saveStatus === 'error' ? 'bg-white/95 border-red-200 text-red-700' : 
+                 saveStatus === 'saved' ? 'bg-white/95 border-emerald-200 text-emerald-800' : 
+                 'bg-white/95 border-slate-200 text-slate-600'
              }`}>
-                 {saveStatus === 'saving' && <Loader2 className="w-5 h-5 animate-spin" />}
-                 {saveStatus === 'saved' && <Check className="w-5 h-5" />}
-                 {saveStatus === 'error' && <AlertCircle className="w-5 h-5" />}
+                 {saveStatus === 'saving' && <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 shrink-0" />}
+                 {saveStatus === 'saved' && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                 {saveStatus === 'error' && <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />}
                  
-                 <span className="font-medium text-sm">
-                     {saveStatus === 'saving' ? 'Saving changes...' : 
-                      saveStatus === 'saved' ? 'Changes saved successfully.' : 
-                      'Failed to save changes.'}
+                 <span className="font-medium">
+                     {saveStatus === 'saving' ? 'Saving...' : 
+                      saveStatus === 'saved' ? 'Settings saved' : 
+                      'Save failed'}
                  </span>
              </div>
          )}
@@ -1081,6 +1152,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         domain={canvasUrl}
         token={apiKey}
         useProxy={useProxy}
+        onExportSettings={handleExportSettingsJson}
+        onImportSettings={(importedSettings) => applySettings(importedSettings)}
       />
 
       <SaveDialog
@@ -1090,6 +1163,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
              performSave(name);
              setIsSaveDialogOpen(false);
         }}
+      />
+
+      <GradeThresholdModal 
+        isOpen={isGradeModalOpen}
+        onClose={() => setIsGradeModalOpen(false)}
+        config={gradeConfig}
+        onSave={(newCfg) => setGradeConfig(newCfg)}
+        studentId={currentStudentId}
+      />
+
+      <InteractiveTutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        assignmentsViewMode={assignmentsViewMode}
+        onAssignmentsViewModeChange={setAssignmentsViewMode}
+        onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+        onOpenNotes={() => setIsNotesOpen(true)}
+        initialTutorialId={activeTutorialId}
       />
     </div>
   );

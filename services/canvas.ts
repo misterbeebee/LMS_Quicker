@@ -130,6 +130,60 @@ const MOCK_COURSES: CourseData[] = [
       id: 3, course_id: 103, type: "StudentEnrollment",
       grades: { current_score: 98.0, current_grade: "A+", final_score: 98.0, final_grade: "A+" }
     }
+  },
+  {
+    course: {
+      id: 104,
+      name: "AP Spanish Language & Culture (Español)",
+      course_code: "SPAN301",
+      sis_course_id: "SPAN301_FALL24",
+      is_favorite: true,
+      term: { id: 1, name: "Fall 2024" }
+    },
+    assignments: [
+      {
+        id: 7,
+        name: "Ensayo: Tradiciones familiares y su impacto cultural",
+        description: "Escriba un ensayo de 500 palabras analizando el impacto de las tradiciones familiares en la identidad contemporánea en los países hispanohablantes. Use ejemplos de las lecturas asignadas.",
+        due_at: new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString(),
+        points_possible: 50,
+        course_id: 104,
+        html_url: "#",
+        submission: undefined,
+        locked_for_user: false,
+        submission_types: ['online_upload'],
+        score_statistics: { min: 35, max: 50, mean: 44.5 }
+      },
+      {
+        id: 8,
+        name: "Grabación oral: La influencia de la música latina",
+        description: "Grabe una respuesta oral de 2 minutos explicando cómo la música folclórica y contemporánea refleja la historia social de Latinoamérica.",
+        due_at: new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString(),
+        points_possible: 30,
+        course_id: 104,
+        html_url: "#",
+        submission: undefined,
+        locked_for_user: false,
+        submission_types: ['media_recording']
+      }
+    ],
+    modules: [
+      {
+        id: 4,
+        name: "Unidad 1: Familias y Comunidades",
+        course_id: 104,
+        items: [
+          { id: 10, title: "Vocabulario: Relaciones familiares", type: "Page", module_id: 4 },
+          { id: 7, title: "Ensayo: Tradiciones familiares y su impacto cultural", type: "Assignment", module_id: 4 }
+        ]
+      }
+    ],
+    enrollment: {
+      id: 4,
+      course_id: 104,
+      type: "StudentEnrollment",
+      grades: { current_score: 91.0, current_grade: "A-", final_score: 91.0, final_grade: "A-" }
+    }
   }
 ];
 
@@ -1475,6 +1529,30 @@ const getMockAssignmentDetail = (
                 score: 88,
                 graded_at: "2024-11-14T09:00:00Z"
             }
+        };
+    }
+
+    if (assignmentId === 7) {
+        return {
+            id: 7,
+            name: base.name || "Ensayo: Tradiciones familiares y su impacto cultural",
+            description: `<h3>Instrucciones del Ensayo</h3>
+<p>Escriba un ensayo analítico de 500 palabras examinando cómo las tradiciones y reuniones familiares preservan los valores culturales a través de las generaciones en el mundo hispano.</p>
+<h4>Puntos clave a discutir:</h4>
+<ul>
+  <li><strong>La estructura familiar:</strong> Compare el concepto de la familia extendida en México y España.</li>
+  <li><strong>Celebraciones comunitarias:</strong> Analice el significado social de fiestas como el Día de los Muertos o las Posadas.</li>
+  <li><strong>Perspectiva personal:</strong> Reflexione sobre las semejanzas y diferencias con su propia comunidad.</li>
+</ul>
+<p>Por favor revise la ortografía, la concordancia gramatical y el uso apropiado del tiempo subjuntivo antes de entregar su archivo PDF.</p>`,
+            due_at: base.due_at || new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString(),
+            points_possible: 50,
+            course_id: courseId || 104,
+            html_url: base.html_url || "https://canvas.instructure.com/courses/104/assignments/7",
+            submission_types: ['online_upload'],
+            allowed_extensions: ['pdf', 'docx'],
+            grading_type: 'points',
+            score_statistics: { min: 35, max: 50, mean: 44.5 }
         };
     }
 
