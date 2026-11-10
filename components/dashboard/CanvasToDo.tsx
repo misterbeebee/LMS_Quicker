@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { CanvasTodoItem } from '../../types';
 import { 
   CheckCircle, 
-  AlertCircle, 
   Calendar, 
   ExternalLink, 
   Loader2, 
@@ -10,20 +9,25 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
-  HelpCircle,
-  FileQuestion,
-  Clock
+  FileQuestion
 } from 'lucide-react';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { cleanAssignmentDescription, linkifyHtml } from '../../utils/dashboard-helpers';
+import { CourseCustomization } from '../../services/courseCustomization';
 
 interface CanvasToDoProps {
   items: CanvasTodoItem[];
   onMarkDone: (item: CanvasTodoItem) => Promise<void>;
   showIds?: boolean;
+  courseCustomizations?: Record<number, CourseCustomization>;
 }
 
-export const CanvasToDo: React.FC<CanvasToDoProps> = ({ items, onMarkDone, showIds = false }) => {
+export const CanvasToDo: React.FC<CanvasToDoProps> = ({ 
+  items, 
+  onMarkDone, 
+  showIds = false,
+  courseCustomizations = {}
+}) => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
@@ -31,8 +35,11 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({ items, onMarkDone, showI
     e.stopPropagation();
     const key = item.ignore || item.html_url;
     setProcessingId(key);
-    await onMarkDone(item);
-    setProcessingId(null);
+    try {
+      await onMarkDone(item);
+    } finally {
+      setProcessingId(null);
+    }
   };
 
   const toggleExpand = (key: string) => {
@@ -57,29 +64,30 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({ items, onMarkDone, showI
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <div className="space-y-5 animate-fadeIn">
       {/* Header bar */}
       <div className="flex items-center justify-between bg-white px-5 py-3.5 rounded-2xl border border-slate-200 shadow-2xs">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shadow-2xs">
             <Megaphone className="w-4 h-4" />
           </div>
           <div>
             <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
               Canvas To Do
-              <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                {items.length} {items.length === 1 ? 'item' : 'items'}
+              <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full">
+                {items.length} {items.length === 1 ? 'task' : 'tasks'}
               </span>
             </h2>
+            <p className="text-xs text-slate-500">Official Canvas planner assignments & actionable items</p>
           </div>
         </div>
         <span className="text-xs text-slate-400 hidden sm:inline">
-          Click an item to view body content
+          Same layout & edge-bonding as assignment cards
         </span>
       </div>
       
-      {/* List of compact ToDo cards */}
-      <div className="space-y-2.5">
+      {/* Grid of edge-bonded ToDo cards identical to assignment cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {items.map((item, index) => {
           const uniqueKey = item.ignore || item.html_url || String(index);
           const date = item.assignment?.due_at || null;
@@ -87,154 +95,166 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({ items, onMarkDone, showI
           const isProcessing = processingId === uniqueKey;
           const isExpanded = expandedKeys.has(uniqueKey);
 
-          const title = item.assignment?.name || item.quiz?.title || 'Untitled Item';
-          const courseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+          const title = item.assignment?.name || item.quiz?.title || 'Canvas To-Do Item';
+          const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+          const courseId = item.course_id || item.assignment?.course_id;
+          const customCourse = courseId ? courseCustomizations[courseId] : undefined;
+          const courseName = customCourse?.abbreviation || rawCourseName;
+          const emoji = customCourse?.emoji;
+
           const rawDesc = item.assignment?.description || item.quiz?.description;
           const cleanedDesc = cleanAssignmentDescription(rawDesc);
           const hasBodyContent = !!cleanedDesc;
 
-          // Replace confusing "submitting" internal Canvas label with clear descriptive tag
           const isQuiz = !!item.quiz || item.type === 'online_quiz';
           const isGrading = item.type === 'grading';
+          const itemId = item.assignment?.id || item.quiz?.id || item.id;
 
           return (
             <div 
               key={uniqueKey} 
-              onClick={() => toggleExpand(uniqueKey)}
-              className={`bg-white rounded-xl shadow-2xs border transition cursor-pointer select-none overflow-hidden ${
-                isExpanded 
-                  ? 'border-blue-300 ring-2 ring-blue-50' 
-                  : 'border-slate-200 hover:border-blue-200 hover:shadow-xs'
-              }`}
+              onClick={() => hasBodyContent && toggleExpand(uniqueKey)}
+              className={`bg-white rounded-xl shadow-xs border border-slate-200/90 border-l-4 border-l-blue-500 hover:shadow-md hover:border-slate-300 transition-all group flex flex-col justify-between overflow-hidden ${
+                hasBodyContent ? 'cursor-pointer' : ''
+              } ${isExpanded ? 'ring-2 ring-blue-100' : ''}`}
+              title={hasBodyContent ? (isExpanded ? "Click to collapse instructions" : "Click to view instructions") : undefined}
             >
-              {/* Main Card Content */}
-              <div className="p-3.5 flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <div className={`mt-0.5 p-2 rounded-lg shrink-0 ${isGrading ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
-                    {isQuiz ? <FileQuestion className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    {/* Course & ID Tag */}
-                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1 flex items-center gap-2 flex-wrap">
-                      <span className="text-blue-700 bg-blue-50 px-2 py-0.2 rounded font-semibold border border-blue-100/60">
-                        {courseName}
-                      </span>
-                      {showIds && (item.assignment?.id || item.quiz?.id || item.id) && (
-                        <span className="text-[10px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-1.5 py-0.2 rounded select-all font-normal">
-                          #{item.assignment?.id || item.quiz?.id || item.id}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Title - wrapped nicely */}
-                    <h3 className="font-semibold text-slate-800 text-sm leading-snug break-words mb-1.5" title={title}>
-                      {title}
-                    </h3>
-
-                    {/* Metadata Strip - No "Submitting" pill! */}
-                    <div className="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
-                      {date && (
-                        <span className="inline-flex items-center gap-1 text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/80">
-                          <Clock className="w-3 h-3 text-slate-400" />
-                          Due {new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                        </span>
-                      )}
-                      {points !== undefined && points !== null && (
-                        <span className="text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/80">
-                          {points} pts
-                        </span>
-                      )}
-                      {isGrading && (
-                        <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                          To Grade
-                        </span>
-                      )}
-                      {hasBodyContent && (
-                        <span className="text-[10px] font-semibold text-blue-600 bg-blue-50/80 px-1.5 py-0.5 rounded border border-blue-100">
-                          {isExpanded ? 'Hide Details' : 'View Instructions'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+              {/* Top bonded header bar */}
+              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 text-[11px] gap-2">
+                {/* Course Name & Badges bonded flush to top-left */}
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <span 
+                    className="font-bold text-slate-700 uppercase tracking-wider truncate max-w-[170px]" 
+                    title={rawCourseName}
+                  >
+                    {emoji ? `${emoji} ` : ''}{courseName}
+                  </span>
+                  {isQuiz && (
+                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-100 shrink-0">
+                      Quiz
+                    </span>
+                  )}
+                  {isGrading && (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 shrink-0">
+                      To Grade
+                    </span>
+                  )}
+                  {showIds && itemId && (
+                    <span 
+                      className="text-[10px] font-mono text-slate-400 select-all shrink-0" 
+                      title={`Task ID: ${itemId}`}
+                    >
+                      #{itemId}
+                    </span>
+                  )}
                 </div>
 
-                {/* Right Actions: Canvas link & Mark Done */}
-                <div className="flex items-center gap-1.5 shrink-0 ml-1 self-start pt-1">
+                {/* Flush top-right: Points pill & external link */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {points !== undefined && points !== null && (
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap bg-slate-100 text-slate-600 border border-slate-200/80">
+                      {points} pts
+                    </span>
+                  )}
                   {item.html_url && (
                     <a 
                       href={item.html_url} 
                       target="_blank" 
                       rel="noreferrer" 
-                      onClick={(e) => e.stopPropagation()}
-                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                      title="Open assignment directly in Canvas"
+                      onClick={(e) => e.stopPropagation()} 
+                      className="text-slate-300 hover:text-blue-600 p-0.5 transition rounded hover:bg-slate-200/60"
+                      title="Open in Canvas"
                     >
-                      <ExternalLink className="w-4 h-4" />
+                      <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   )}
-
-                  {item.ignore && (
-                    <button 
-                      onClick={(e) => handleDone(item, e)}
-                      disabled={isProcessing}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:border-emerald-400 text-slate-700 hover:text-emerald-700 text-xs font-medium rounded-lg hover:bg-emerald-50/50 transition disabled:opacity-50 cursor-pointer shadow-2xs"
-                      title="Dismiss from Canvas planner To-Do list"
-                    >
-                      {isProcessing ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-                      ) : (
-                        <CheckCircle className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600" />
-                      )}
-                      <span>{isProcessing ? 'Saving...' : 'Mark Done'}</span>
-                    </button>
-                  )}
-
-                  <div className="p-1 text-slate-300 hover:text-slate-500">
-                    {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                  </div>
                 </div>
               </div>
 
-              {/* Expandable Body Content / Instructions */}
-              {isExpanded && (
-                <div 
-                  className="px-4 py-3 bg-slate-50/80 border-t border-slate-100 text-xs text-slate-700 animate-fadeIn"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {hasBodyContent ? (
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">
-                        Instructions / Description
-                      </span>
-                      <div 
-                        className="prose prose-sm max-w-none text-slate-700 bg-white p-3 rounded-lg border border-slate-200/80 max-h-60 overflow-y-auto custom-scrollbar"
-                        dangerouslySetInnerHTML={{ __html: linkifyHtml(cleanedDesc) }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-white rounded-lg border border-slate-200/60 text-slate-400 italic">
-                      No additional instructions provided for this item.
-                    </div>
-                  )}
+              {/* Card Body */}
+              <div className="p-3 flex-1 min-w-0 bg-white">
+                <h4 className="font-semibold text-slate-800 group-hover:text-blue-600 transition text-sm leading-snug line-clamp-2" title={title}>
+                  {item.html_url ? (
+                    <a 
+                      href={item.html_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      onClick={(e) => e.stopPropagation()} 
+                      className="hover:underline"
+                    >
+                      {title}
+                    </a>
+                  ) : title}
+                </h4>
 
-                  <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
-                    <span>
-                      {date ? `Scheduled on Canvas planner for ${new Date(date).toLocaleDateString()}` : 'No due date specified'}
-                    </span>
-                    {item.html_url && (
-                      <a 
-                        href={item.html_url} 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
-                      >
-                        Open in Canvas <ExternalLink className="w-3 h-3" />
-                      </a>
+                {hasBodyContent && (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    {isExpanded ? (
+                      <div 
+                        className="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 prose prose-xs max-w-none mt-1 max-h-48 overflow-y-auto custom-scrollbar"
+                        dangerouslySetInnerHTML={{ __html: linkifyHtml(cleanedDesc) }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    ) : (
+                      <p className="line-clamp-2 text-slate-500 leading-relaxed">{cleanedDesc.replace(/<[^>]*>/g, ' ')}</p>
                     )}
                   </div>
+                )}
+              </div>
+
+              {/* Bottom bonded footer bar */}
+              <div className="px-3 py-1.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs bg-slate-50/80 text-slate-600">
+                {/* Due date bonded flush to bottom-left */}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span className="font-medium truncate">
+                    {date ? (
+                      new Date(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                    ) : 'No Due Date'}
+                  </span>
                 </div>
-              )}
+
+                {/* Right controls: Details toggle + "Done?" Checkbox */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {hasBodyContent && (
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleExpand(uniqueKey);
+                      }}
+                      className="text-[10px] font-semibold text-blue-600 hover:text-blue-700 bg-blue-50/80 hover:bg-blue-100 px-1.5 py-0.5 rounded border border-blue-100 transition cursor-pointer"
+                    >
+                      {isExpanded ? 'Hide' : 'Details'}
+                    </button>
+                  )}
+
+                  {item.ignore && (
+                    <label 
+                      onClick={(e) => e.stopPropagation()}
+                      className={`inline-flex items-center gap-1.5 cursor-pointer select-none px-2.5 py-0.5 rounded text-xs font-semibold transition shadow-2xs ${
+                        isProcessing 
+                          ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' 
+                          : 'bg-white text-slate-700 border border-slate-300 hover:border-emerald-400 hover:bg-emerald-50/60 hover:text-emerald-800'
+                      }`}
+                      title="Check Done? to dismiss this task from Canvas"
+                    >
+                      {isProcessing ? (
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                      ) : (
+                        <input 
+                          type="checkbox"
+                          checked={false}
+                          disabled={isProcessing}
+                          onChange={(e) => handleDone(item, e as any)}
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer"
+                        />
+                      )}
+                      <span>Done?</span>
+                    </label>
+                  )}
+                </div>
+              </div>
             </div>
           );
         })}

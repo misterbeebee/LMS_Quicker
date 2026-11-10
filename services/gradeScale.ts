@@ -120,13 +120,18 @@ export const getGradeStyle = (
 
   // Discrete Stepped Classes (used when blending is disabled or for clean baseline styling)
   if (!enableBlending || options.isCourseGrade) {
-    // For overall course grade: distinct letter grade boundaries with danger zone callouts
     if (percentage >= greenMin) {
       return {
         percentage,
         letter,
         className: 'bg-emerald-50 text-emerald-800 border border-emerald-300 font-bold',
-        style: {},
+        style: {
+          backgroundColor: 'rgba(16, 185, 129, 0.14)',
+          borderColor: 'rgba(16, 185, 129, 0.45)',
+          color: '#065f46',
+          borderWidth: '1px',
+          borderStyle: 'solid'
+        },
         badgeClass: 'bg-emerald-50 text-emerald-800 border border-emerald-300',
         textClass: 'text-emerald-700',
         hasScore: true
@@ -138,7 +143,13 @@ export const getGradeStyle = (
         percentage,
         letter,
         className: `bg-amber-50 text-amber-800 border ${nearBoundary ? 'border-amber-400 ring-1 ring-amber-300' : 'border-amber-300'} font-bold`,
-        style: {},
+        style: {
+          backgroundColor: 'rgba(245, 158, 11, 0.14)',
+          borderColor: nearBoundary ? 'rgba(217, 119, 6, 0.6)' : 'rgba(245, 158, 11, 0.45)',
+          color: '#92400e',
+          borderWidth: '1px',
+          borderStyle: 'solid'
+        },
         badgeClass: 'bg-amber-50 text-amber-800 border border-amber-300',
         textClass: 'text-amber-700',
         hasScore: true
@@ -150,7 +161,13 @@ export const getGradeStyle = (
         percentage,
         letter,
         className: `bg-orange-50 text-orange-800 border ${nearBoundary ? 'border-orange-400 ring-1 ring-orange-300' : 'border-orange-300'} font-bold`,
-        style: {},
+        style: {
+          backgroundColor: 'rgba(249, 115, 22, 0.14)',
+          borderColor: nearBoundary ? 'rgba(234, 88, 12, 0.6)' : 'rgba(249, 115, 22, 0.45)',
+          color: '#9a3412',
+          borderWidth: '1px',
+          borderStyle: 'solid'
+        },
         badgeClass: 'bg-orange-50 text-orange-800 border border-orange-300',
         textClass: 'text-orange-700',
         hasScore: true
@@ -161,7 +178,13 @@ export const getGradeStyle = (
       percentage,
       letter,
       className: 'bg-red-50 text-red-800 border border-red-300 font-bold',
-      style: {},
+      style: {
+        backgroundColor: 'rgba(239, 68, 68, 0.14)',
+        borderColor: 'rgba(239, 68, 68, 0.45)',
+        color: '#991b1b',
+        borderWidth: '1px',
+        borderStyle: 'solid'
+      },
       badgeClass: 'bg-red-50 text-red-800 border border-red-300',
       textClass: 'text-red-700',
       hasScore: true
@@ -169,39 +192,41 @@ export const getGradeStyle = (
   }
 
   // Smooth Tier Blending for Assignment Grades:
-  // Interpolates between colors so boundary scores like 89% and 90% transition naturally.
-  let primaryRgb = COLOR_RED;
+  // Distinct hue foundations with wider color value gaps between adjacent tiers
+  let primaryRgb: [number, number, number] = [220, 38, 38];
   if (percentage >= greenMin) {
-    // 90% to 100%: from Yellow-Green to vibrant Emerald
-    const factor = Math.min(1, (percentage - greenMin) / 10);
+    // Green Tier: crisp emerald from [34, 197, 94] (greenMin) to deep forest [5, 150, 105] (100%)
+    const factor = Math.min(1, Math.max(0, (percentage - greenMin) / 10));
     primaryRgb = [
-      Math.round(COLOR_YELLOW[0] + factor * (COLOR_EMERALD[0] - COLOR_YELLOW[0])),
-      Math.round(COLOR_YELLOW[1] + factor * (COLOR_EMERALD[1] - COLOR_YELLOW[1])),
-      Math.round(COLOR_YELLOW[2] + factor * (COLOR_EMERALD[2] - COLOR_YELLOW[2]))
+      Math.round(34 - factor * 29),
+      Math.round(197 - factor * 47),
+      Math.round(94 + factor * 11)
     ];
   } else if (percentage >= yellowMin) {
-    // 80% to 90%: smoothly blend from Orange-Yellow to Yellow
-    const factor = (percentage - yellowMin) / (greenMin - yellowMin);
+    // Yellow/Amber Tier: warm gold [245, 158, 11] (yellowMin) to [217, 119, 6] (greenMin - 0.1)
+    // Notice: Never bleeds into green, maintaining a decisive color value gap against 90%
+    const factor = Math.min(1, Math.max(0, (percentage - yellowMin) / (greenMin - yellowMin)));
     primaryRgb = [
-      Math.round(COLOR_ORANGE[0] + factor * (COLOR_YELLOW[0] - COLOR_ORANGE[0])),
-      Math.round(COLOR_ORANGE[1] + factor * (COLOR_YELLOW[1] - COLOR_ORANGE[1])),
-      Math.round(COLOR_ORANGE[2] + factor * (COLOR_YELLOW[2] - COLOR_ORANGE[2]))
+      Math.round(245 - factor * 28),
+      Math.round(158 - factor * 39),
+      Math.round(11 - factor * 5)
     ];
   } else if (percentage >= orangeMin) {
-    // 70% to 80%: smoothly blend from Red-Orange to Orange
-    const factor = (percentage - orangeMin) / (yellowMin - orangeMin);
+    // Orange Tier: warm tangerine [249, 115, 22] to [234, 88, 12]
+    // Notice: Decisive color value gap against 80% amber
+    const factor = Math.min(1, Math.max(0, (percentage - orangeMin) / (yellowMin - orangeMin)));
     primaryRgb = [
-      Math.round(COLOR_RED[0] + factor * (COLOR_ORANGE[0] - COLOR_RED[0])),
-      Math.round(COLOR_RED[1] + factor * (COLOR_ORANGE[1] - COLOR_RED[1])),
-      Math.round(COLOR_RED[2] + factor * (COLOR_ORANGE[2] - COLOR_RED[2]))
+      Math.round(249 - factor * 15),
+      Math.round(115 - factor * 27),
+      Math.round(22 - factor * 10)
     ];
   } else {
-    // Below orangeMin: Deep Red
-    const factor = Math.max(0, percentage / orangeMin);
+    // Below orangeMin: Crimson Red
+    const factor = Math.min(1, Math.max(0, percentage / orangeMin));
     primaryRgb = [
-      Math.round(220 + factor * 19),
-      Math.round(38 + factor * 30),
-      Math.round(38 + factor * 30)
+      Math.round(185 + factor * 35),
+      Math.round(28 + factor * 20),
+      Math.round(28 + factor * 20)
     ];
   }
 

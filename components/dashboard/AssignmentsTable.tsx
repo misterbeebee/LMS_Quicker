@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { CanvasAssignment, CanvasTodoItem, SortKey, SortConfig, FilterMode } from '../../types';
-import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, Clock, CheckCircle2, Megaphone } from 'lucide-react';
+import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, CheckCircle2, Megaphone, Loader2 } from 'lucide-react';
 import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentDetailFlipSide } from './AssignmentDetailFlipSide';
@@ -132,7 +132,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         }
 
         // 1. Archived filter: hide unless showArchived is true
-        const isArchived = archivedAssignmentIds.has(a.id);
+        const isArchived = archivedAssignmentIds?.has(a.id) ?? false;
         if (isArchived && !showArchived) return false;
 
         // 2. Obsolete filter: hide items >6 weeks overdue without submission unless showObsolete is true
@@ -141,12 +141,12 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
           if (diffDays > 42) return false;
         }
 
-        return Object.entries(columnFilters).every(([key, selectedValues]) => {
-            const filters = selectedValues as Set<string>;
+        return Object.entries(columnFilters || {}).every(([key, selectedValues]) => {
+            const filters = selectedValues instanceof Set ? selectedValues : new Set(Array.isArray(selectedValues) ? selectedValues : []);
             if (!filters || filters.size === 0) return true;
             
             const val = getFilterValue(a, key);
-            const mode = filterModes[key] || 'include';
+            const mode = (filterModes && filterModes[key]) || 'include';
             
             return mode === 'include' ? filters.has(val) : !filters.has(val);
         });
@@ -181,25 +181,29 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
       const multiplier = direction === 'asc' ? 1 : -1;
 
       switch (key) {
-        case 'id': return (a.id - b.id) * multiplier;
-        case 'name': return (a.name || '').localeCompare(b.name || '') * multiplier;
+        case 'id': return (Number(a.id || 0) - Number(b.id || 0)) * multiplier;
+        case 'name': return String(a.name || '').localeCompare(String(b.name || '')) * multiplier;
         case 'course': {
-             const nameA = getCourseName(a.course_id);
-             const nameB = getCourseName(b.course_id);
+             const nameA = String(getCourseName ? getCourseName(a.course_id) : '');
+             const nameB = String(getCourseName ? getCourseName(b.course_id) : '');
              return nameA.localeCompare(nameB) * multiplier;
         }
         case 'due_at': {
-          const dateA = new Date(a.due_at!).getTime();
-          const dateB = new Date(b.due_at!).getTime();
+          const dateA = a.due_at ? new Date(a.due_at).getTime() : 0;
+          const dateB = b.due_at ? new Date(b.due_at).getTime() : 0;
           return (dateA - dateB) * multiplier;
         }
         case 'status': {
-          const statusA = getAssignmentStatus(a).label;
-          const statusB = getAssignmentStatus(b).label;
+          const statusA = String(getAssignmentStatus(a)?.label || '');
+          const statusB = String(getAssignmentStatus(b)?.label || '');
           return statusA.localeCompare(statusB) * multiplier;
         }
-        case 'score': return (Number(a.submission!.score) - Number(b.submission!.score)) * multiplier;
-        case 'points': return (a.points_possible - b.points_possible) * multiplier;
+        case 'score': {
+          const scoreA = (a.submission?.score !== null && a.submission?.score !== undefined) ? Number(a.submission.score) : -Infinity;
+          const scoreB = (b.submission?.score !== null && b.submission?.score !== undefined) ? Number(b.submission.score) : -Infinity;
+          return (scoreA - scoreB) * multiplier;
+        }
+        case 'points': return (Number(a.points_possible || 0) - Number(b.points_possible || 0)) * multiplier;
         case 'locked': {
           const lockedA = !!a.locked_for_user;
           const lockedB = !!b.locked_for_user;
@@ -211,13 +215,13 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
           return (subA === subB ? 0 : subA ? -1 : 1) * multiplier; 
         }
         case 'type': {
-          const typeA = formatSubmissionType(a.submission_types);
-          const typeB = formatSubmissionType(b.submission_types);
+          const typeA = String(formatSubmissionType(a.submission_types) || '');
+          const typeB = String(formatSubmissionType(b.submission_types) || '');
           return typeA.localeCompare(typeB) * multiplier;
         }
-        case 'hidden': { // Kept 'hidden' as key for sorting, but logically it's archived
-          const hiddenA = archivedAssignmentIds.has(a.id);
-          const hiddenB = archivedAssignmentIds.has(b.id);
+        case 'hidden': {
+          const hiddenA = !!archivedAssignmentIds?.has(a.id);
+          const hiddenB = !!archivedAssignmentIds?.has(b.id);
           return (hiddenA === hiddenB ? 0 : hiddenA ? 1 : -1) * multiplier;
         }
         default: return 0;
@@ -401,7 +405,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Clock className="w-3.5 h-3.5" />
+            <Calendar className="w-3.5 h-3.5 text-blue-600" />
             <span>Upcoming & Active</span>
             <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
               workflowSection === 'upcoming' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'
@@ -544,66 +548,80 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                 return (
                   <div
                     key={uniqueKey}
-                    className="p-3 rounded-xl border border-blue-200/70 bg-white shadow-2xs hover:shadow-xs transition flex flex-col justify-between gap-2.5"
+                    className="rounded-xl border border-blue-200/90 border-l-4 border-l-blue-500 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
                   >
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[140px]">
-                          {courseName}
-                        </span>
+                    {/* Top bonded header */}
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 text-[11px] gap-2">
+                      <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[140px]" title={courseName}>
+                        {courseName}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
                         {points !== undefined && (
-                          <span className="text-[10px] font-semibold text-slate-500">
+                          <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 rounded-full">
                             {points} pts
                           </span>
                         )}
-                      </div>
-                      <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug" title={title}>
-                        {title}
-                      </h4>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                      <span className="flex items-center gap-1 text-slate-600">
-                        <Clock className="w-3 h-3 text-slate-400" />
-                        {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
-                      </span>
-
-                      <div className="flex items-center gap-1.5">
                         {item.html_url && (
                           <a
                             href={item.html_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1 rounded text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition"
+                            className="text-slate-300 hover:text-blue-600 p-0.5 rounded transition"
                             title="Open in Canvas"
                           >
-                            <ExternalLink className="w-3.5 h-3.5" />
+                            <ExternalLink className="w-3 h-3" />
                           </a>
                         )}
-                        {onMarkTodoDone && (
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                setProcessingTodoKey(uniqueKey);
-                                await onMarkTodoDone(item);
-                              } finally {
-                                setProcessingTodoKey(null);
-                              }
-                            }}
-                            disabled={isProcessing}
-                            className={`px-2 py-0.5 text-[11px] font-semibold rounded-md border transition cursor-pointer flex items-center gap-1 ${
-                              isProcessing
-                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                            }`}
-                            title="Mark as done in Canvas"
-                          >
-                            <Check className="w-3 h-3" />
-                            <span>{isProcessing ? 'Saving...' : 'Done'}</span>
-                          </button>
-                        )}
                       </div>
+                    </div>
+
+                    {/* Body */}
+                    <div className="p-3 flex-1 min-w-0 bg-white">
+                      <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug group-hover:text-blue-600 transition" title={title}>
+                        {title}
+                      </h4>
+                    </div>
+
+                    {/* Bottom bonded footer */}
+                    <div className="px-3 py-1.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs bg-slate-50/80 text-slate-600">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+                        <span className="font-medium text-[11px] truncate">
+                          {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
+                        </span>
+                      </div>
+
+                      {onMarkTodoDone && (
+                        <label
+                          onClick={(e) => e.stopPropagation()}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
+                            isProcessing 
+                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
+                          }`}
+                          title="Mark as done and dismiss from Canvas To-Do"
+                        >
+                          {isProcessing ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                          ) : (
+                            <input
+                              type="checkbox"
+                              checked={false}
+                              disabled={isProcessing}
+                              onChange={async () => {
+                                try {
+                                  setProcessingTodoKey(uniqueKey);
+                                  await onMarkTodoDone(item);
+                                } finally {
+                                  setProcessingTodoKey(null);
+                                }
+                              }}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
+                            />
+                          )}
+                          <span>Done?</span>
+                        </label>
+                      )}
                     </div>
                   </div>
                 );
@@ -649,10 +667,10 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
               const status = getAssignmentStatus(assignment);
               const rowMeta = getRowMeta(assignment);
               const score = assignment.submission?.score;
-              const courseName = getCourseName(assignment.course_id);
+              const courseName = getCourseName ? getCourseName(assignment.course_id) : 'Course';
               const rawDesc = stripHtml(assignment.description);
               const cleanDesc = isFillerDescription(rawDesc) ? "" : rawDesc;
-              const isArchived = archivedAssignmentIds.has(assignment.id);
+              const isArchived = archivedAssignmentIds?.has(assignment.id) ?? false;
               const isExpanded = expandedRowIds.has(assignment.id);
               const isPastDue = isAssignmentPastDue(assignment);
               const lockInfo = getAssignmentLockInfo(assignment);

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CourseData, ALL_COURSES_ID, CanvasCalendarEvent } from '../../types';
-import { ExternalLink, GraduationCap, ClipboardList, Layers, Settings, AlertTriangle, Compass, HelpCircle, Play, Calendar, Clock } from 'lucide-react';
+import { ExternalLink, GraduationCap, ClipboardList, Layers, Settings, AlertTriangle, Compass, HelpCircle, Play, Calendar } from 'lucide-react';
 import { isAssignmentSubmitted } from '../../utils/dashboard-helpers';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { CourseCustomization } from '../../services/courseCustomization';
@@ -43,7 +43,7 @@ export const Overview: React.FC<OverviewProps> = ({
     let possible = 0;
     let gradedCount = 0;
 
-    c.assignments.forEach(a => {
+    (c.assignments || []).forEach(a => {
       if (!a.is_calendar_event && a.points_possible > 0 && a.submission?.score !== null && a.submission?.score !== undefined) {
         earned += Number(a.submission.score);
         possible += Number(a.points_possible);
@@ -64,6 +64,17 @@ export const Overview: React.FC<OverviewProps> = ({
   const getEffectiveGrade = (c: CourseData): { score: number; letter?: string; isEstimated: boolean; hasData: boolean } | null => {
     const officialScore = c.enrollment?.grades?.current_score;
     const officialGrade = c.enrollment?.grades?.current_grade;
+
+    // Count real graded assignments in this course
+    const gradedAssignments = (c.assignments || []).filter(
+      a => !a.is_calendar_event && a.points_possible > 0 && a.submission?.score !== null && a.submission?.score !== undefined
+    );
+
+    // If officialScore is 0 (or officialGrade is F) but there are ZERO graded assignments in the course,
+    // this is a Canvas zero-placeholder for unstarted/ungraded courses, NOT a genuine 0% F.
+    if ((officialScore === 0 || officialGrade?.toUpperCase() === 'F') && gradedAssignments.length === 0) {
+      return null;
+    }
 
     // Check if official score is a real number (including 0!)
     if (typeof officialScore === 'number' && !isNaN(officialScore)) {
@@ -90,8 +101,8 @@ export const Overview: React.FC<OverviewProps> = ({
   };
 
   const singleGradeInfo = getEffectiveGrade(course);
-  const notSubmittedCount = course.assignments.filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
-  const eventCount = course.assignments.filter(a => !!a.is_calendar_event).length;
+  const notSubmittedCount = (course?.assignments || []).filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
+  const eventCount = (course?.assignments || []).filter(a => !!a.is_calendar_event).length;
 
   return (
     <div className="space-y-6">
@@ -231,7 +242,7 @@ export const Overview: React.FC<OverviewProps> = ({
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Modules</div>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">{course.modules.length}</span>
+                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">{course?.modules?.length || 0}</span>
                 <span className="text-xs text-slate-500">units</span>
               </div>
             </div>
@@ -264,7 +275,7 @@ export const Overview: React.FC<OverviewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {course.assignments
+            {(course?.assignments || [])
               .filter(a => !!a.is_calendar_event)
               .map(ev => {
                 const formattedDate = ev.due_at 
@@ -288,8 +299,7 @@ export const Overview: React.FC<OverviewProps> = ({
                     </div>
 
                     <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                      <span className="flex items-center gap-1 font-medium text-slate-600">
-                        <Clock className="w-3 h-3 text-slate-400" />
+                      <span className="font-medium text-slate-600">
                         {formattedDate}
                       </span>
                       {ev.location_name && (
@@ -331,7 +341,7 @@ export const Overview: React.FC<OverviewProps> = ({
               const custom = courseCustomizations?.[c.course.id];
               const displayName = custom?.abbreviation || c.course.name;
               const emoji = custom?.emoji;
-              const pending = c.assignments.filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
+              const pending = (c.assignments || []).filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
 
               return (
                 <div 

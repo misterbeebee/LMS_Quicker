@@ -67,7 +67,7 @@ export const GradeThresholdModal: React.FC<GradeThresholdModalProps> = ({
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-2xl shadow-2xl border border-slate-200/90 w-full max-w-lg overflow-hidden text-left"
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200/90 w-full max-w-2xl overflow-hidden text-left"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -91,72 +91,83 @@ export const GradeThresholdModal: React.FC<GradeThresholdModalProps> = ({
           </button>
         </div>
 
-        {/* Sliders Body */}
+        {/* Sliders Body - All 3 tiers in one horizontal line */}
         <div className="p-6 space-y-5 text-sm">
-          {/* Green Tier */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="font-semibold text-slate-700 flex items-center gap-2 text-xs">
-                <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block shadow-2xs" />
-                <span>Green Tier (A / Excellent)</span>
-              </label>
-              <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-xs border border-emerald-200">
-                &ge; {greenMin}%
-              </span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Green Tier */}
+            <div className="space-y-2 p-3 bg-emerald-50/30 rounded-xl border border-emerald-100 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <label className="font-semibold text-slate-800 flex items-center gap-1.5 text-xs truncate">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0 shadow-2xs" />
+                    <span>Green (A)</span>
+                  </label>
+                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] border border-emerald-200 shrink-0">
+                    &ge; {greenMin}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-tight mb-2">Emerald green</p>
+              </div>
+              <input 
+                type="range"
+                min={yellowMin + 1}
+                max={100}
+                value={greenMin}
+                onChange={(e) => setGreenMin(Number(e.target.value))}
+                className="w-full accent-emerald-600 cursor-pointer"
+                title={`Green tier minimum: ${greenMin}%`}
+              />
             </div>
-            <input 
-              type="range"
-              min={yellowMin + 1}
-              max={100}
-              value={greenMin}
-              onChange={(e) => setGreenMin(Number(e.target.value))}
-              className="w-full accent-emerald-600 cursor-pointer"
-            />
-            <p className="text-[11px] text-slate-400">Scores at or above this percentage appear emerald green.</p>
-          </div>
 
-          {/* Yellow Tier */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="font-semibold text-slate-700 flex items-center gap-2 text-xs">
-                <span className="w-3 h-3 rounded-full bg-amber-400 inline-block shadow-2xs" />
-                <span>Yellow Tier (B / Good)</span>
-              </label>
-              <span className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded text-xs border border-amber-200">
-                {yellowMin}% &ndash; {greenMin - 1}%
-              </span>
+            {/* Yellow Tier */}
+            <div className="space-y-2 p-3 bg-amber-50/30 rounded-xl border border-amber-100 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <label className="font-semibold text-slate-800 flex items-center gap-1.5 text-xs truncate">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0 shadow-2xs" />
+                    <span>Yellow (B)</span>
+                  </label>
+                  <span className="font-mono font-bold text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded text-[11px] border border-amber-200 shrink-0">
+                    {yellowMin}%&ndash;{greenMin - 1}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-tight mb-2">Amber / gold</p>
+              </div>
+              <input 
+                type="range"
+                min={orangeMin + 1}
+                max={greenMin - 1}
+                value={yellowMin}
+                onChange={(e) => setYellowMin(Number(e.target.value))}
+                className="w-full accent-amber-500 cursor-pointer"
+                title={`Yellow tier minimum: ${yellowMin}%`}
+              />
             </div>
-            <input 
-              type="range"
-              min={orangeMin + 1}
-              max={greenMin - 1}
-              value={yellowMin}
-              onChange={(e) => setYellowMin(Number(e.target.value))}
-              className="w-full accent-amber-500 cursor-pointer"
-            />
-            <p className="text-[11px] text-slate-400">Scores between yellow and green appear amber/yellow.</p>
-          </div>
 
-          {/* Orange Tier */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="font-semibold text-slate-700 flex items-center gap-2 text-xs">
-                <span className="w-3 h-3 rounded-full bg-orange-500 inline-block shadow-2xs" />
-                <span>Orange Tier (C / Fair)</span>
-              </label>
-              <span className="font-mono font-bold text-orange-800 bg-orange-50 px-2 py-0.5 rounded text-xs border border-orange-200">
-                {orangeMin}% &ndash; {yellowMin - 1}%
-              </span>
+            {/* Orange Tier */}
+            <div className="space-y-2 p-3 bg-orange-50/30 rounded-xl border border-orange-100 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <label className="font-semibold text-slate-800 flex items-center gap-1.5 text-xs truncate">
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0 shadow-2xs" />
+                    <span>Orange (C)</span>
+                  </label>
+                  <span className="font-mono font-bold text-orange-800 bg-orange-50 px-1.5 py-0.5 rounded text-[11px] border border-orange-200 shrink-0">
+                    {orangeMin}%&ndash;{yellowMin - 1}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-tight mb-2">Tangerine (&lt;{orangeMin}% is red)</p>
+              </div>
+              <input 
+                type="range"
+                min={40}
+                max={yellowMin - 1}
+                value={orangeMin}
+                onChange={(e) => setOrangeMin(Number(e.target.value))}
+                className="w-full accent-orange-500 cursor-pointer"
+                title={`Orange tier minimum: ${orangeMin}%`}
+              />
             </div>
-            <input 
-              type="range"
-              min={40}
-              max={yellowMin - 1}
-              value={orangeMin}
-              onChange={(e) => setOrangeMin(Number(e.target.value))}
-              className="w-full accent-orange-500 cursor-pointer"
-            />
-            <p className="text-[11px] text-slate-400">Scores below {orangeMin}% appear red (Needs Attention).</p>
           </div>
 
           {/* Smooth Tier Blending Toggle */}

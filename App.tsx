@@ -1,14 +1,14 @@
 
 import React, { useState, useEffect } from 'react';
 import { AppState, ViewMode, CourseData, StudentProfile } from './types';
-import { fetchCanvasData, fetchMockData } from './services/canvas';
+import { fetchCanvasData, fetchMockData, fetchStudentName } from './services/canvas';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { DebugPage } from './components/DebugPage';
 import { LogConsole } from './components/LogConsole';
 import { logger } from './services/logger';
 import { APP_SECRET, encryptData, decryptData, StoredCredentials } from './services/crypto';
-import { getActiveStudent, ensureProfileForLogin, setActiveStudentId } from './services/students';
+import { getActiveStudent, ensureProfileForLogin, setActiveStudentId, updateStudentName } from './services/students';
 import { Loader2 } from 'lucide-react';
 
 const AUTO_LOGIN_KEY = 'canvas_session_auto_v1';
@@ -76,6 +76,19 @@ const App: React.FC = () => {
       if (!isDemo && domain && token) {
         const profile = ensureProfileForLogin(domain, token, useProxy, batchSize);
         profileId = profile.id;
+        const pendingName = localStorage.getItem('canvas_pending_student_name');
+        if (pendingName) {
+          localStorage.removeItem('canvas_pending_student_name');
+          updateStudentName(profile.id, pendingName);
+        } else {
+          // Asynchronously fetch real student name from Canvas to update profile name
+          fetchStudentName(domain, token, useProxy).then(fetchedName => {
+            if (fetchedName && fetchedName.trim()) {
+              updateStudentName(profile.id, fetchedName.trim());
+              setState(prev => ({ ...prev }));
+            }
+          }).catch(e => logger.warn("Failed to fetch student name:", e));
+        }
       }
 
       // Login Successful
@@ -239,6 +252,13 @@ const App: React.FC = () => {
               currentStudentId={state.currentStudentId || activeStudent?.id}
               currentStudentName={currentStudentName}
               onSwitchStudent={handleSwitchStudent}
+              onRenameStudent={(newName: string) => {
+                const targetId = state.currentStudentId || getActiveStudent()?.id;
+                if (targetId) {
+                  updateStudentName(targetId, newName);
+                  setState(prev => ({ ...prev }));
+                }
+              }}
           />
         </div>
       )}

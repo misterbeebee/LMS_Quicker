@@ -1,0 +1,6 @@
+/* Canvas Quicker global styling */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}

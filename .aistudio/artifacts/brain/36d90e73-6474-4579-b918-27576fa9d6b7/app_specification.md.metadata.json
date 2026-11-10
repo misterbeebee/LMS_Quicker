@@ -1,5 +1,5 @@
 {
-  "summary":  "Comprehensive specification documenting the Canvas Academic Intelligence Dashboard, including 10-minute remote autosave throttling, Display popover integration, score entity semantics, Estimated Grade (Est) heuristic and vertical alignment, world language translation modal, and guided walkthrough tours.",
-  "updatedAt":  "2026-11-10T16:00:20.675392052Z",
+  "summary":  "Updated comprehensive living specification (v1.2) for the Canvas Academic Intelligence Dashboard. Includes detailed specifications for the 'Done?' checkbox, exact calendar event display locations, student name auto-detection and logged-out display, 0% vs No Data handling, 3-in-1 horizontal grade boundary sliders, compact AI analyzer, bonded card edge layout, elimination of clock icons, persistent feedback banner, and list view error handling.",
+  "updatedAt":  "2026-11-10T21:15:07.210451978Z",
   "userFacing":  true
 }

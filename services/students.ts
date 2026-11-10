@@ -97,6 +97,21 @@ export const updateStudent = (profile: StudentProfile): void => {
 };
 
 /**
+ * Update the display name of a student
+ */
+export const updateStudentName = (id: string, newName: string): StudentProfile | null => {
+  const students = getSavedStudents();
+  const index = students.findIndex(s => s.id === id);
+  if (index >= 0 && newName.trim()) {
+    students[index] = { ...students[index], name: newName.trim() };
+    persistStudents(students);
+    logger.info(`Renamed student profile ${id} to: ${newName}`);
+    return students[index];
+  }
+  return null;
+};
+
+/**
  * Remove a student profile
  */
 export const removeStudent = (id: string): void => {

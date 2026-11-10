@@ -228,7 +228,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
         {/* Metadata Strip */}
         <div className="py-2.5 px-5 flex items-center flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-600 border-b border-slate-100 bg-slate-50/30">
           <div className="flex items-center gap-1.5 font-medium">
-            <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>
               {assignment.due_at 
                 ? (isAssignmentPastDue(assignment)

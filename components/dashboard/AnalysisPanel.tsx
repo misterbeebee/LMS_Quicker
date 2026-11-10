@@ -31,7 +31,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
     return (
       <div 
         onClick={() => setIsCollapsed(false)}
-        className="mb-3 bg-gradient-to-r from-indigo-50/60 to-purple-50/60 hover:from-indigo-50 hover:to-purple-50 rounded-lg px-3 py-1.5 border border-indigo-100/80 shadow-2xs transition-all flex items-center justify-between gap-3 cursor-pointer group"
+        className="mb-3 w-fit inline-flex max-w-full bg-gradient-to-r from-indigo-50/70 to-purple-50/70 hover:from-indigo-100/70 hover:to-purple-100/70 rounded-xl px-3 py-1.5 border border-indigo-200/80 shadow-2xs transition-all items-center gap-3 cursor-pointer group"
         title="Click to expand AI Analysis"
       >
         <div className="flex items-center gap-2 min-w-0">

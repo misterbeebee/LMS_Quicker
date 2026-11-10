@@ -81,19 +81,27 @@
         margin-bottom: 0.25rem !important;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0"
-  }
-}
-</script>
-<link rel="stylesheet" href="/index.css">
-</head>
+    <script>
+      // Gracefully prevent unhandled WebSocket/HMR rejection in iframe and container environments
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event && event.reason;
+        var message = (reason && reason.message) || String(reason || '');
+        if (message.indexOf('WebSocket') !== -1 || message.indexOf('closed without opened') !== -1 || message.indexOf('vite:ws') !== -1) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      });
+      window.addEventListener('error', function(event) {
+        var msg = (event && event.message) || '';
+        var filename = (event && event.filename) || '';
+        if (msg.indexOf('WebSocket') !== -1 || filename.indexOf('@vite/client') !== -1) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        }
+      });
+    </script>
+    <link rel="stylesheet" href="/index.css">
+  </head>
   <body class="bg-slate-50 text-slate-900 antialiased h-screen overflow-hidden">
     <div id="root" class="h-full w-full"></div>
   <script type="module" src="/index.tsx"></script>

@@ -4,6 +4,7 @@ export interface WorldLanguageMatch {
   isLanguageCourse: boolean;
   languageName: string;
   sourceCode: string; // ISO 639-1 code (e.g., 'es', 'fr', 'de')
+  languageCode?: string; // alias for sourceCode
   targetCode: string; // typically 'en'
   badgeText: string;
 }
@@ -102,6 +103,7 @@ export function detectWorldLanguage(courseName: string): WorldLanguageMatch {
           isLanguageCourse: true,
           languageName: lang.name,
           sourceCode: lang.code,
+          languageCode: lang.code,
           targetCode: 'en',
           badgeText: `${lang.code.toUpperCase()} ➔ EN`
         };
@@ -113,6 +115,7 @@ export function detectWorldLanguage(courseName: string): WorldLanguageMatch {
     isLanguageCourse: false,
     languageName: '',
     sourceCode: 'auto',
+    languageCode: 'auto',
     targetCode: 'en',
     badgeText: ''
   };

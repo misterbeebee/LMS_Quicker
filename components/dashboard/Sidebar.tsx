@@ -474,11 +474,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   {showScores && (() => {
-                    const officialScore = item.enrollment?.grades.current_score;
-                    const officialGrade = item.enrollment?.grades.current_grade;
+                    const officialScore = item.enrollment?.grades?.current_score;
+                    const officialGrade = item.enrollment?.grades?.current_grade;
 
-                    // If neither official score nor letter grade exists, no data
-                    if ((officialScore === null || officialScore === undefined) && !officialGrade) {
+                    // Check if there are genuine graded assignments in this course
+                    const gradedCount = (item.assignments || []).filter(
+                      a => !a.is_calendar_event && a.points_possible > 0 && a.submission?.score !== null && a.submission?.score !== undefined
+                    ).length;
+
+                    // If score is 0 or grade is F but there are 0 graded items, this is Canvas unstarted placeholder -> no data
+                    if ((officialScore === 0 || officialGrade?.toUpperCase() === 'F') && gradedCount === 0) {
                       return null;
                     }
 

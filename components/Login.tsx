@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Loader2, ExternalLink, AlertTriangle, Lock, Unlock, Trash2, KeyRound, RefreshCw, ArrowLeft, Archive, Clipboard, Check, DownloadCloud, Bug, ChevronDown, ChevronUp, Users, ChevronRight } from 'lucide-react';
 import { encryptData, decryptData, StoredCredentials } from '../services/crypto';
 import { logger } from '../services/logger';
-import { getSavedStudents, StudentProfile, setActiveStudentId } from '../services/students';
+import { getSavedStudents, StudentProfile, setActiveStudentId, getActiveStudent } from '../services/students';
 
 interface LoginProps {
   onLogin: (domain: string, token: string, isDemo: boolean, useProxy: boolean, batchSize: number, studentId?: string) => void;
@@ -29,6 +29,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   // Setup State
   const [domain, setDomain] = useState('mcpsmd.instructure.com');
   const [token, setToken] = useState(DEV_DEFAULT_KEY);
+  const [studentName, setStudentName] = useState('');
   const [useProxy, setUseProxy] = useState(true);
   const [saveProfile, setSaveProfile] = useState(false);
   const [newPassphrase, setNewPassphrase] = useState('');
@@ -126,6 +127,10 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
     if (cleanToken && !CANVAS_TOKEN_PATTERN.test(cleanToken)) {
         setShowTokenConfirmation(true);
         return;
+    }
+
+    if (studentName.trim()) {
+      localStorage.setItem('canvas_pending_student_name', studentName.trim());
     }
 
     await executeLogin(cleanDomain, cleanToken);
@@ -375,6 +380,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   }
 
   const errorMessage = getDetailedErrorMessage();
+  const activeStudent = getActiveStudent();
+  const matchedStudent = savedStudents.find(s => s.domain === storedData?.domain);
+  const studentDisplayName = activeStudent?.name || matchedStudent?.name;
 
   // Render Main Login / Unlock View
   return (
@@ -386,7 +394,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Canvas Quicker</h1>
           <p className="text-slate-500 mt-2 text-sm">
-            {mode === 'UNLOCK' ? 'Welcome back! Unlock your session.' : 'Connect your account to analyze data.'}
+            {mode === 'UNLOCK' 
+              ? (studentDisplayName ? `Welcome back, ${studentDisplayName}! Unlock your session.` : 'Welcome back! Unlock your session.') 
+              : 'Connect your account to analyze data.'}
           </p>
         </div>
 
@@ -470,9 +480,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
             </form>
           ) : (
             <form onSubmit={handleUnlockSubmit} className="space-y-6">
-               <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-center">
-                 <p className="text-sm text-slate-500 mb-1">Logging in to</p>
-                 <p className="font-semibold text-blue-800">{storedData.domain}</p>
+               <div className="bg-blue-50/70 p-4 rounded-xl border border-blue-100 text-center">
+                 {studentDisplayName && (
+                   <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center mx-auto mb-2 shadow-2xs">
+                     {studentDisplayName.charAt(0).toUpperCase()}
+                   </div>
+                 )}
+                 <p className="text-xs text-slate-500 mb-0.5">Logging in {studentDisplayName ? `as ${studentDisplayName} to` : 'to'}</p>
+                 <p className="font-semibold text-blue-800 text-sm">{storedData.domain}</p>
                </div>
 
                <div>
@@ -568,7 +583,21 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
               </div>
             )}
 
-            <form onSubmit={handleSetupSubmit} className="space-y-6">
+            <form onSubmit={handleSetupSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Student Name <span className="text-slate-400 font-normal text-xs">(optional - auto-detected if blank)</span>
+                </label>
+                <input
+                  type="text"
+                  value={studentName}
+                  onChange={(e) => setStudentName(e.target.value)}
+                  placeholder="e.g. Alex"
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-sm"
+                  title="Enter student name or nickname"
+                />
+              </div>
+
               <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Canvas Domain</label>
               <input

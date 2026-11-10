@@ -186,7 +186,7 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
       <div className="py-2.5 px-0 flex items-center flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-600 border-b border-slate-100 bg-slate-50/50 -mx-4 px-4 mb-2">
         {/* Due Date */}
         <div className="flex items-center gap-1">
-          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
           <span>
             {assignment.due_at 
               ? (isAssignmentPastDue(assignment)

@@ -22,6 +22,7 @@ import { InteractiveTutorialModal, TutorialId } from './dashboard/InteractiveTut
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getSavedGradeConfig, saveGradeConfig } from '../services/gradeScale';
 import { logger } from '../services/logger';
 import { Loader2, Check, AlertCircle } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { 
   getCourseCustomizations, 
   saveCourseCustomization, 
@@ -41,6 +42,7 @@ interface DashboardProps {
   currentStudentId?: string;
   currentStudentName?: string;
   onSwitchStudent?: (student: StudentProfile) => void;
+  onRenameStudent?: (newName: string) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
@@ -52,7 +54,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onDebug,
   currentStudentId,
   currentStudentName,
-  onSwitchStudent
+  onSwitchStudent,
+  onRenameStudent
 }) => {
   // Course Customization & Drag Ordering State
   const [courseCustomizations, setCourseCustomizations] = useState<Record<number, CourseCustomization>>(() => 
@@ -495,7 +498,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
              } as CourseData;
          }
 
-         let allAssignments = relevantCourses.flatMap(c => c.assignments);
+         let allAssignments = relevantCourses.flatMap(c => c.assignments || []);
          const allModules = relevantCourses.flatMap(c => (c.modules || []).map(m => ({
            ...m,
            course_id: m.course_id || c.course.id
@@ -539,7 +542,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const found = data.find(c => c.course.id === selectedCourseId);
     if (!found) return null;
 
-    let courseAssignments = [...found.assignments];
+    let courseAssignments = [...(found.assignments || [])];
     if (showCalendarEvents && calendarEvents.length > 0) {
       const courseEvents = calendarEvents.filter(ev => {
         if (hidePastEvents && isPastCalendarEvent(ev)) return false;
@@ -960,6 +963,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             currentStudentName={currentStudentName}
             currentDomain={canvasUrl}
             onSwitchStudent={onSwitchStudent}
+            onRenameStudent={onRenameStudent}
          />
 
          <main className="flex-1 overflow-y-auto p-8 custom-scrollbar relative">
@@ -992,56 +996,61 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {/* Main Content Area */}
                     <div className="animate-fadeIn">
                         {activeTab === 'overview' && (
-                           <div className="space-y-6">
-                                <Overview 
-                                    course={selectedCourse}
-                                    allCoursesData={data.filter(c => showHiddenCourses || c.course.is_favorite)}
-                                    onNavigate={setActiveTab}
-                                    showScores={showScores}
-                                    showCalendarEvents={showCalendarEvents}
-                                    calendarEvents={calendarEvents}
-                                    gradeConfig={gradeConfig}
-                                    onOpenGradeSettings={() => setIsGradeModalOpen(true)}
-                                    courseCustomizations={courseCustomizations}
-                                    onSelectCourse={(courseId) => setSelectedCourseId(courseId)}
-                                    onStartTutorial={(tid) => {
-                                      if (tid) setActiveTutorialId(tid);
-                                      setIsTutorialOpen(true);
-                                    }}
-                                />
-                           </div>
+                           <ErrorBoundary fallbackTitle="Unable to display Overview">
+                             <div className="space-y-6">
+                                  <Overview 
+                                      course={selectedCourse}
+                                      allCoursesData={data.filter(c => showHiddenCourses || c.course.is_favorite)}
+                                      onNavigate={setActiveTab}
+                                      showScores={showScores}
+                                      showCalendarEvents={showCalendarEvents}
+                                      calendarEvents={calendarEvents}
+                                      gradeConfig={gradeConfig}
+                                      onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+                                      courseCustomizations={courseCustomizations}
+                                      onSelectCourse={(courseId) => setSelectedCourseId(courseId)}
+                                      onStartTutorial={(tid) => {
+                                        if (tid) setActiveTutorialId(tid);
+                                        setIsTutorialOpen(true);
+                                      }}
+                                  />
+                             </div>
+                           </ErrorBoundary>
                         )}
 
                         {activeTab === 'assignments' && (
                              assignmentsViewMode === 'board' ? (
-                                <AssignmentsBoard 
-                                    assignments={selectedCourse.assignments}
-                                    getCourseName={getCourseName}
-                                    courseCustomizations={courseCustomizations}
-                                    archivedAssignmentIds={archivedAssignmentIds}
-                                    onToggleArchived={toggleArchived}
-                                    onToggleMarkedSubmitted={toggleMarkedSubmitted}
-                                    showScores={showScores}
-                                    showClassAverages={showClassAverages}
-                                    showArchived={showArchived}
-                                    showSubmitted={showSubmitted}
-                                    showObsolete={showObsolete}
-                                    showIds={showIds}
-                                    canvasUrl={canvasUrl}
-                                    apiKey={apiKey}
-                                    useProxy={useProxy}
-                                    acknowledgedFeedbackIds={acknowledgedFeedbackIds}
-                                    onToggleAcknowledgeComment={handleToggleAcknowledgeComment}
-                                    onAcknowledgeAllComments={handleAcknowledgeAllComments}
-                                    filterFeedbackOnly={filterFeedbackOnly}
-                                    onToggleFilterFeedback={setFilterFeedbackOnly}
-                                    gradeConfig={gradeConfig}
-                                    onOpenGradeSettings={() => setIsGradeModalOpen(true)}
-                                    todoItems={todoItems}
-                                    onMarkTodoDone={handleMarkTodoDone}
-                                />
+                                <ErrorBoundary fallbackTitle="Unable to display Assignments Board">
+                                  <AssignmentsBoard 
+                                      assignments={selectedCourse.assignments}
+                                      getCourseName={getCourseName}
+                                      courseCustomizations={courseCustomizations}
+                                      archivedAssignmentIds={archivedAssignmentIds}
+                                      onToggleArchived={toggleArchived}
+                                      onToggleMarkedSubmitted={toggleMarkedSubmitted}
+                                      showScores={showScores}
+                                      showClassAverages={showClassAverages}
+                                      showArchived={showArchived}
+                                      showSubmitted={showSubmitted}
+                                      showObsolete={showObsolete}
+                                      showIds={showIds}
+                                      canvasUrl={canvasUrl}
+                                      apiKey={apiKey}
+                                      useProxy={useProxy}
+                                      acknowledgedFeedbackIds={acknowledgedFeedbackIds}
+                                      onToggleAcknowledgeComment={handleToggleAcknowledgeComment}
+                                      onAcknowledgeAllComments={handleAcknowledgeAllComments}
+                                      filterFeedbackOnly={filterFeedbackOnly}
+                                      onToggleFilterFeedback={setFilterFeedbackOnly}
+                                      gradeConfig={gradeConfig}
+                                      onOpenGradeSettings={() => setIsGradeModalOpen(true)}
+                                      todoItems={todoItems}
+                                      onMarkTodoDone={handleMarkTodoDone}
+                                  />
+                                </ErrorBoundary>
                              ) : (
-                                <AssignmentsTable 
+                                <ErrorBoundary fallbackTitle="Unable to display list view" onReset={() => setSortConfig(null)}>
+                                  <AssignmentsTable 
                                     assignments={selectedCourse.assignments}
                                     showIds={showIds}
                                     showCourseColumn={selectedCourseId === ALL_COURSES_ID}
@@ -1072,44 +1081,50 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     onOpenGradeSettings={() => setIsGradeModalOpen(true)}
                                     todoItems={todoItems}
                                     onMarkTodoDone={handleMarkTodoDone}
-                                />
+                                  />
+                                </ErrorBoundary>
                              )
                         )}
 
                         {activeTab === 'modules' && (
-                            <ModulesList 
-                                modules={selectedCourse.modules}
-                                expandedModules={expandedModules}
-                                toggleModule={(id) => {
-                                    setExpandedModules(prev => {
-                                        const next = new Set(prev);
-                                        if (next.has(id)) next.delete(id);
-                                        else next.add(id);
-                                        return next;
-                                    });
-                                }}
-                                onExpandAllModules={(expand) => {
-                                    if (expand) {
-                                        setExpandedModules(new Set(selectedCourse.modules.map(m => m.id)));
-                                    } else {
-                                        setExpandedModules(new Set());
-                                    }
-                                }}
-                                showCourseCode={selectedCourseId === ALL_COURSES_ID}
-                                getCourseName={getCourseName}
-                                showIds={showIds}
-                                courses={data}
-                                courseOrder={courseOrder}
-                                customizations={courseCustomizations}
-                            />
+                            <ErrorBoundary fallbackTitle="Unable to display Modules">
+                              <ModulesList 
+                                  modules={selectedCourse.modules}
+                                  expandedModules={expandedModules}
+                                  toggleModule={(id) => {
+                                      setExpandedModules(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(id)) next.delete(id);
+                                          else next.add(id);
+                                          return next;
+                                      });
+                                  }}
+                                  onExpandAllModules={(expand) => {
+                                      if (expand) {
+                                          setExpandedModules(new Set(selectedCourse.modules.map(m => m.id)));
+                                      } else {
+                                          setExpandedModules(new Set());
+                                      }
+                                  }}
+                                  showCourseCode={selectedCourseId === ALL_COURSES_ID}
+                                  getCourseName={getCourseName}
+                                  showIds={showIds}
+                                  courses={data}
+                                  courseOrder={courseOrder}
+                                  customizations={courseCustomizations}
+                              />
+                            </ErrorBoundary>
                         )}
 
                         {activeTab === 'canvas_todo' && (
-                            <CanvasToDo 
-                                items={todoItems}
-                                onMarkDone={handleMarkTodoDone}
-                                showIds={showIds}
-                            />
+                            <ErrorBoundary fallbackTitle="Unable to display Canvas To-Do">
+                              <CanvasToDo 
+                                  items={todoItems}
+                                  onMarkDone={handleMarkTodoDone}
+                                  showIds={showIds}
+                                  courseCustomizations={courseCustomizations}
+                              />
+                            </ErrorBoundary>
                         )}
                     </div>
                  </div>

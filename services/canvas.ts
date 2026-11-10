@@ -344,6 +344,40 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
     throw new Error("Unable to identify user. Cannot access secure storage.");
 };
 
+/**
+ * Fetch the logged-in student's real display name from Canvas (/api/v1/users/self)
+ */
+export const fetchStudentName = async (domain: string, token: string, useProxy: boolean): Promise<string | null> => {
+    try {
+        const url = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        if (res.ok) {
+            const data = await parseSafeJson(res, 'User Profile');
+            if (data?.name && typeof data.name === 'string' && data.name.trim()) {
+                return data.name.trim();
+            }
+            if (data?.short_name && typeof data.short_name === 'string' && data.short_name.trim()) {
+                return data.short_name.trim();
+            }
+        }
+        // Fallback to /api/v1/users/self
+        const selfUrl = buildUrl(domain, '/api/v1/users/self', useProxy);
+        const selfRes = await fetch(selfUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        if (selfRes.ok) {
+            const selfData = await parseSafeJson(selfRes, 'User Self');
+            if (selfData?.name && typeof selfData.name === 'string' && selfData.name.trim()) {
+                return selfData.name.trim();
+            }
+            if (selfData?.short_name && typeof selfData.short_name === 'string' && selfData.short_name.trim()) {
+                return selfData.short_name.trim();
+            }
+        }
+    } catch (e: any) {
+        logger.warn("Failed to fetch student name from Canvas:", e.message);
+    }
+    return null;
+};
+
 // Generate deterministic hash for folder name
 const generateHashCode = async (seed: string, input: string): Promise<string> => {
     const encoder = new TextEncoder();

@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import { CanvasAssignment, CanvasTodoItem } from '../../types';
 import { 
-  Calendar, AlertCircle, Clock, ArrowRight, AlertTriangle, CheckCircle2, 
+  Calendar, AlertCircle, ArrowRight, AlertTriangle, CheckCircle2, 
   Lock, FileCheck, Archive, ArchiveRestore, HelpCircle, MessageSquare, 
   BookOpen, MapPin, Maximize2, Check, FileText, Settings, Languages, Globe,
   ChevronDown, ChevronRight, Megaphone, Loader2, ExternalLink
@@ -660,7 +660,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Clock className="w-3.5 h-3.5" />
+            <Calendar className="w-3.5 h-3.5 text-blue-600" />
             <span>Upcoming & Active</span>
             <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
               workflowSection === 'upcoming' ? 'bg-blue-100 text-blue-800' : 'bg-slate-200 text-slate-600'
@@ -690,46 +690,35 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
 
         {/* Secondary Filter Controls */}
         <div className="flex items-center flex-wrap gap-2">
-          {/* Segmented Filter: All / Assignments / Events */}
-          <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200/60 shadow-2xs">
-            <button
-              type="button"
-              onClick={() => setItemTypeFilter('all')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                itemTypeFilter === 'all' 
-                  ? 'bg-white text-slate-900 shadow-2xs font-bold' 
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              All Items ({assignments.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setItemTypeFilter('assignments')}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                itemTypeFilter === 'assignments' 
-                  ? 'bg-white text-slate-900 shadow-2xs font-bold' 
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Assignments ({totalAssignmentsCount})
-            </button>
-            {totalEventsCount > 0 && (
+          {/* Segmented Filter: Only show if there are actual calendar events to toggle between */}
+          {totalEventsCount > 0 && (
+            <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200/60 shadow-2xs">
               <button
                 type="button"
-                onClick={() => setItemTypeFilter('events')}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                  itemTypeFilter === 'events' 
-                    ? 'bg-purple-600 text-white shadow-2xs font-bold' 
-                    : 'text-purple-700 hover:text-purple-900'
+                onClick={() => setItemTypeFilter('assignments')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                  itemTypeFilter === 'assignments' 
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
-                title="Show only live calendar events"
+                title="Show coursework assignments only"
               >
-                <Calendar className="w-3 h-3" />
-                <span>Events ({totalEventsCount})</span>
+                Assignments Only ({totalAssignmentsCount})
               </button>
-            )}
-          </div>
+              <button
+                type="button"
+                onClick={() => setItemTypeFilter('all')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
+                  itemTypeFilter === 'all' 
+                    ? 'bg-white text-slate-900 shadow-2xs font-bold' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Include Canvas calendar events (lectures, exams, reminders) alongside assignments"
+              >
+                Include Calendar Events ({assignments.length})
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -753,6 +742,28 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Persistent Default Feedback Notice Banner if unacknowledged feedback exists */}
+      {!activeFilterFeedback && unackTotalCount > 0 && (
+        <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/80 border border-blue-200/90 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs text-blue-900 shadow-2xs mb-4 animate-fadeIn">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-blue-600 text-white rounded-lg shadow-2xs">
+              <MessageSquare className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <span className="font-bold text-slate-900">Instructor Feedback Available:</span>
+              <span className="ml-1.5 text-slate-600">You have {unackTotalCount} unacknowledged instructor {unackTotalCount === 1 ? 'comment' : 'comments'}/rubric notes to review.</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleFeedbackFilter()}
+            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs transition cursor-pointer shrink-0 shadow-2xs"
+          >
+            Review Feedback ({unackTotalCount})
+          </button>
+        </div>
+      )}
 
       {/* FEEDBACK FILTER OVERRIDE VIEW */}
       {activeFilterFeedback ? (
@@ -914,59 +925,73 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                     return (
                       <div
                         key={uniqueKey}
-                        className="p-3 rounded-xl border border-blue-200/70 bg-white shadow-2xs hover:shadow-xs transition flex flex-col justify-between gap-2.5"
+                        className="rounded-xl border border-blue-200/90 border-l-4 border-l-blue-500 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
                       >
-                        <div>
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.2 rounded truncate max-w-[140px]">
-                              {courseName}
-                            </span>
+                        {/* Top bonded header */}
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 text-[11px] gap-2">
+                          <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[140px]" title={courseName}>
+                            {courseName}
+                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {points !== undefined && (
-                              <span className="text-[10px] font-semibold text-slate-500">
+                              <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 rounded-full">
                                 {points} pts
                               </span>
                             )}
-                          </div>
-                          <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug" title={title}>
-                            {title}
-                          </h4>
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                          <span className="flex items-center gap-1 text-slate-600">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
-                          </span>
-
-                          <div className="flex items-center gap-1.5">
                             {item.html_url && (
                               <a
                                 href={item.html_url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="p-1 text-slate-400 hover:text-blue-600 rounded transition"
+                                className="text-slate-300 hover:text-blue-600 p-0.5 rounded transition"
                                 title="Open in Canvas"
                               >
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                             )}
-                            {onMarkTodoDone && (
-                              <button
-                                type="button"
-                                onClick={(e) => handleTodoDone(item, e)}
-                                disabled={isProcessing}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 transition cursor-pointer"
-                                title="Mark as done and dismiss from Canvas To-Do"
-                              >
-                                {isProcessing ? (
-                                  <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
-                                ) : (
-                                  <Check className="w-3 h-3 text-emerald-600" />
-                                )}
-                                <span>Done</span>
-                              </button>
-                            )}
                           </div>
+                        </div>
+
+                        {/* Body */}
+                        <div className="p-3 flex-1 min-w-0 bg-white">
+                          <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug group-hover:text-blue-600 transition" title={title}>
+                            {title}
+                          </h4>
+                        </div>
+
+                        {/* Bottom bonded footer */}
+                        <div className="px-3 py-1.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs bg-slate-50/80 text-slate-600">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+                            <span className="font-medium text-[11px] truncate">
+                              {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
+                            </span>
+                          </div>
+
+                          {onMarkTodoDone && (
+                            <label
+                              onClick={(e) => e.stopPropagation()}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
+                                isProcessing 
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
+                              }`}
+                              title="Mark as done and dismiss from Canvas To-Do"
+                            >
+                              {isProcessing ? (
+                                <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                              ) : (
+                                <input
+                                  type="checkbox"
+                                  checked={false}
+                                  disabled={isProcessing}
+                                  onChange={(e) => handleTodoDone(item, e as any)}
+                                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
+                                />
+                              )}
+                              <span>Done?</span>
+                            </label>
+                          )}
                         </div>
                       </div>
                     );
@@ -995,7 +1020,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             {/* Column 2: Due Soon / Up Next */}
             <div className="lg:col-span-1 space-y-6">
               <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wide">
-                <Clock className="w-4 h-4 text-slate-400" /> Up Next (2 days)
+                Up Next (2 days)
               </h3>
               {grouped.today.length === 0 ? (
                 <p className="text-sm text-slate-400 italic">Nothing due in the next 2 days.</p>
