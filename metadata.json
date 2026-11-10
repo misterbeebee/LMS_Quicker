@@ -1,0 +1,8 @@
+{
+  "name": "Canvas Quicker",
+  "description": "Connects to Canvas LMS to download assignments, modules, and grades. Features data visualization, multiple export formats (CSV, XML, JSON), and Gemini AI-powered academic workload analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
