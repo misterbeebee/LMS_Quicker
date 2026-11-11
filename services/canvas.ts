@@ -2,6 +2,7 @@
 
 import { CanvasCourse, CanvasAssignment, CanvasAssignmentDetail, CanvasModule, CanvasEnrollment, CourseData, CanvasTodoItem, CanvasCalendarEvent } from '../types';
 import { logger } from './logger';
+import { getActiveStudent } from './students';
 
 const MOCK_DELAY = 1500;
 const NOTES_FILENAME = 'canvas_app_notes.txt';
@@ -320,7 +321,7 @@ const parseSafeJson = async (res: Response, endpointDescription: string = 'API r
   const trimmed = text.trim();
   if (trimmed.startsWith('<')) {
     logger.error(`Received HTML instead of JSON for ${endpointDescription}`, trimmed.slice(0, 150));
-    throw new Error(`Received an HTML response instead of JSON. Please verify that your Canvas domain is correct.`);
+    throw new Error(`Received an HTML response instead of JSON. Please verify that your Canvas/LMS domain is correct.`);
   }
   try {
     return JSON.parse(text);
@@ -329,19 +330,115 @@ const parseSafeJson = async (res: Response, endpointDescription: string = 'API r
   }
 };
 
-// Get User ID for storage separation
-const getUserId = async (domain: string, token: string, useProxy: boolean): Promise<string> => {
-    const url = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
+// User ID cache to avoid repeated profile requests and prevent network/storage errors
+let memoryCachedUserId: string | null = null;
+
+export const setCachedUserId = (id: string | number) => {
+  if (id) {
+    memoryCachedUserId = String(id);
     try {
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+      localStorage.setItem('canvas_quicker_user_id', String(id));
+    } catch {}
+  }
+};
+
+export const getCachedUserId = (): string | null => {
+  if (memoryCachedUserId) return memoryCachedUserId;
+  try {
+    const stored = localStorage.getItem('canvas_quicker_user_id');
+    if (stored) {
+      memoryCachedUserId = stored;
+      return stored;
+    }
+  } catch {}
+  return null;
+};
+
+// Get User ID for storage separation with multi-tier fallback and safe recovery
+const getUserId = async (domain: string, token: string, useProxy: boolean): Promise<string> => {
+    // 1. Check in-memory / localStorage cache first
+    const cached = getCachedUserId();
+    if (cached) {
+        return cached;
+    }
+
+    // 2. Try universal /api/v1/users/self (accessible to all student, observer, and teacher accounts)
+    try {
+        const selfUrl = buildUrl(domain, '/api/v1/users/self', useProxy);
+        const res = await fetch(selfUrl, { 
+            headers: { 
+                'Authorization': `Bearer ${token.trim()}`,
+                'Accept': 'application/json'
+            }
+        });
+        if (res.ok) {
+            const data = await parseSafeJson(res, 'User Self');
+            if (data?.id) {
+                const idStr = String(data.id);
+                setCachedUserId(idStr);
+                return idStr;
+            }
+        }
+    } catch (e: any) {
+        logger.warn("Failed to fetch user self endpoint for ID generation:", e?.message);
+    }
+
+    // 3. Fallback to /api/v1/users/self/profile
+    try {
+        const profileUrl = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
+        const res = await fetch(profileUrl, { 
+            headers: { 
+                'Authorization': `Bearer ${token.trim()}`,
+                'Accept': 'application/json'
+            }
+        });
         if (res.ok) {
             const data = await parseSafeJson(res, 'User Profile');
-            return String(data.id);
+            if (data?.id) {
+                const idStr = String(data.id);
+                setCachedUserId(idStr);
+                return idStr;
+            }
         }
-    } catch (e) {
-        logger.warn("Failed to fetch user profile for ID generation");
+    } catch (e: any) {
+        logger.warn("Failed to fetch user profile for ID generation:", e?.message);
     }
-    throw new Error("Unable to identify user. Cannot access secure storage.");
+
+    // 4. Try genericCanvasFetch (which has automatic fallback logic from direct to internal proxy)
+    try {
+        const res = await genericCanvasFetch(domain, token, '/users/self', useProxy);
+        if (res?.id) {
+            const idStr = String(res.id);
+            setCachedUserId(idStr);
+            return idStr;
+        }
+    } catch (e: any) {
+        logger.warn("Generic canvas fetch for user self failed:", e?.message);
+    }
+
+    // 5. Check if active student profile ID exists in students service
+    try {
+        const activeStudent = getActiveStudent();
+        if (activeStudent?.id) {
+            setCachedUserId(activeStudent.id);
+            return activeStudent.id;
+        }
+    } catch {}
+
+    // 6. Safe deterministic fallback: derive unique hash from domain and token
+    // This guarantees remote autosave and directory hashing NEVER throw an unhandled error
+    try {
+        const cleanDomain = domain.replace(/https?:\/\//, '').replace(/\/$/, '');
+        const tokenSnippet = token.trim().slice(-20);
+        const fallbackSeed = `${cleanDomain}:${tokenSnippet}`;
+        const fallbackHash = await generateHashCode(APP_SEED, fallbackSeed);
+        const fallbackId = `user_${fallbackHash.substring(0, 12)}`;
+        logger.info(`Using deterministic fallback user identifier: ${fallbackId}`);
+        setCachedUserId(fallbackId);
+        return fallbackId;
+    } catch {
+        return 'user_default';
+    }
 };
 
 /**
@@ -349,27 +446,35 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
  */
 export const fetchStudentName = async (domain: string, token: string, useProxy: boolean): Promise<string | null> => {
     try {
-        const url = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
-        if (res.ok) {
-            const data = await parseSafeJson(res, 'User Profile');
-            if (data?.name && typeof data.name === 'string' && data.name.trim()) {
-                return data.name.trim();
-            }
-            if (data?.short_name && typeof data.short_name === 'string' && data.short_name.trim()) {
-                return data.short_name.trim();
-            }
-        }
-        // Fallback to /api/v1/users/self
+        // Universal /api/v1/users/self first
         const selfUrl = buildUrl(domain, '/api/v1/users/self', useProxy);
-        const selfRes = await fetch(selfUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        const selfRes = await fetch(selfUrl, { headers: { 'Authorization': `Bearer ${token.trim()}`, 'Accept': 'application/json' }});
         if (selfRes.ok) {
             const selfData = await parseSafeJson(selfRes, 'User Self');
+            if (selfData?.id) {
+                setCachedUserId(selfData.id);
+            }
             if (selfData?.name && typeof selfData.name === 'string' && selfData.name.trim()) {
                 return selfData.name.trim();
             }
             if (selfData?.short_name && typeof selfData.short_name === 'string' && selfData.short_name.trim()) {
                 return selfData.short_name.trim();
+            }
+        }
+
+        // Fallback to /api/v1/users/self/profile
+        const url = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token.trim()}`, 'Accept': 'application/json' }});
+        if (res.ok) {
+            const data = await parseSafeJson(res, 'User Profile');
+            if (data?.id) {
+                setCachedUserId(data.id);
+            }
+            if (data?.name && typeof data.name === 'string' && data.name.trim()) {
+                return data.name.trim();
+            }
+            if (data?.short_name && typeof data.short_name === 'string' && data.short_name.trim()) {
+                return data.short_name.trim();
             }
         }
     } catch (e: any) {
@@ -533,7 +638,10 @@ export const saveFileToCanvas = async (
       return true;
 
   } catch (e: any) {
-      logger.error(`Save file '${filename}' failed`, e);
+      logger.warn(`Save file '${filename}' failed:`, e?.message || e);
+      if (isBackground) {
+          return false;
+      }
       throw e;
   }
 };
@@ -844,10 +952,39 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
   };
 
   try {
-    // 1. Fetch Courses 
-    logger.info("Fetching courses list...");
-    const courses: CanvasCourse[] = await fetchPage('/courses?enrollment_state=active&include[]=term&include[]=favorites', 1);
-    logger.info(`Successfully fetched ${courses.length} courses.`);
+    // 1. Fetch Courses and user-defined Course Nicknames from Canvas
+    logger.info("Fetching courses list and user-defined course nicknames...");
+    const [courses, nicknames] = await Promise.all([
+      fetchPage('/courses?enrollment_state=active&include[]=term&include[]=favorites', 1),
+      fetchAll('/users/self/course_nicknames').catch((err) => {
+        logger.warn("Could not fetch user course nicknames from Canvas:", err?.message || err);
+        return [];
+      })
+    ]);
+
+    // Build map of user-defined course nicknames from Canvas
+    const nicknameMap = new Map<number, string>();
+    if (Array.isArray(nicknames)) {
+      for (const n of nicknames) {
+        if (n && n.course_id && n.nickname) {
+          nicknameMap.set(n.course_id, String(n.nickname).trim());
+        }
+      }
+    }
+
+    // Apply Canvas user-defined nickname directly to course object
+    if (Array.isArray(courses)) {
+      for (const c of courses) {
+        const userNick = nicknameMap.get(c.id);
+        if (userNick) {
+          c.nickname = userNick;
+          c.original_name = c.name;
+          c.name = userNick; // Make user-defined nickname the primary display name!
+        }
+      }
+    }
+
+    logger.info(`Successfully fetched ${courses.length} courses (${nicknameMap.size} user nicknames applied).`);
     
     // 2. Batched Fetch Details
     const results: CourseData[] = [];
@@ -876,6 +1013,9 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
                 ]);
 
                 const enrollment = enrollments.find((e: CanvasEnrollment) => e.course_id === course.id);
+                if ((enrollment as any)?.user_id) {
+                    setCachedUserId((enrollment as any).user_id);
+                }
                 
                 const assignmentsMap = new Map();
                 if (Array.isArray(assignmentsRaw)) {

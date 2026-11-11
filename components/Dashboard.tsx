@@ -678,7 +678,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               const timestamp = now.toISOString().replace(/[:.]/g, '-');
               // Use background save (keepalive: true) to ensure this completes after unload
               // Explicitly save to 'saves' subfolder
-              saveFileToCanvas(canvasUrl, apiKey, `auto_save_${timestamp}.json`, content, useProxy, SAVES_FOLDER, true).catch(err => console.error("Auto save failed", err));
+              saveFileToCanvas(canvasUrl, apiKey, `auto_save_${timestamp}.json`, content, useProxy, SAVES_FOLDER, true).catch(err => logger.warn("Auto save warning:", err?.message || err));
           }
       };
       
@@ -835,17 +835,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const getCourseName = (id: number) => {
       if (id === ALL_COURSES_ID) return 'All Courses';
       if (!id || id <= 0) return 'Course';
-      const custom = courseCustomizations[id];
       const c = data.find(x => x.course.id === id);
       if (!c) {
-          if (custom?.abbreviation) return custom.abbreviation;
           return 'Course';
       }
-      if (custom?.abbreviation) {
-          return custom.abbreviation;
-      }
-      const name = c.course.name || c.course.course_code || 'Course';
-      return pruneCourseTitle(name);
+      const rawName = c.course.nickname || c.course.name || c.course.course_code || 'Course';
+      return pruneCourseTitle(rawName);
   };
 
   const handleToggleCourseVisibility = (courseId: number) => {
@@ -1020,7 +1015,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
                         {activeTab === 'assignments' && (
                              assignmentsViewMode === 'board' ? (
-                                <ErrorBoundary fallbackTitle="Unable to display Assignments Board">
+                                <ErrorBoundary key={`board-${selectedCourseId}`} fallbackTitle="Unable to display Assignments Board">
                                   <AssignmentsBoard 
                                       assignments={selectedCourse.assignments}
                                       getCourseName={getCourseName}
@@ -1046,15 +1041,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                       onOpenGradeSettings={() => setIsGradeModalOpen(true)}
                                       todoItems={todoItems}
                                       onMarkTodoDone={handleMarkTodoDone}
+                                      courses={data}
                                   />
                                 </ErrorBoundary>
                              ) : (
-                                <ErrorBoundary fallbackTitle="Unable to display list view" onReset={() => setSortConfig(null)}>
+                                <ErrorBoundary key={`table-${selectedCourseId}`} fallbackTitle="Unable to display list view" onReset={() => setSortConfig(null)}>
                                   <AssignmentsTable 
                                     assignments={selectedCourse.assignments}
                                     showIds={showIds}
                                     showCourseColumn={selectedCourseId === ALL_COURSES_ID}
                                     getCourseName={getCourseName}
+                                    courseCustomizations={courseCustomizations}
                                     archivedAssignmentIds={archivedAssignmentIds}
                                     onToggleArchived={toggleArchived}
                                     onToggleMarkedSubmitted={toggleMarkedSubmitted}
@@ -1081,6 +1078,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     onOpenGradeSettings={() => setIsGradeModalOpen(true)}
                                     todoItems={todoItems}
                                     onMarkTodoDone={handleMarkTodoDone}
+                                    courses={data}
                                   />
                                 </ErrorBoundary>
                              )
@@ -1123,6 +1121,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                   onMarkDone={handleMarkTodoDone}
                                   showIds={showIds}
                                   courseCustomizations={courseCustomizations}
+                                  getCourseName={getCourseName}
+                                  courses={data}
                               />
                             </ErrorBoundary>
                         )}

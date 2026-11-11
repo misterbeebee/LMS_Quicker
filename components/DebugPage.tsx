@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ArrowLeft, Play, Wifi, AlertCircle, Bolt, ChevronRight, FolderOpen, Calendar, HelpCircle } from 'lucide-react';
+import { ArrowLeft, Play, Wifi, AlertCircle, Bolt, ChevronRight, FolderOpen, Calendar, HelpCircle, FlaskConical, CheckCircle2, XCircle, Check } from 'lucide-react';
 import { genericCanvasFetch, listSaveStates, SAVES_FOLDER, diagnoseCalendarEventsFetch } from '../services/canvas';
 import { logger } from '../services/logger';
 
@@ -166,6 +166,46 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
     }
   };
 
+  const handleRunTestSuite = async () => {
+    setLoading(true);
+    setError(null);
+    setResponse(null);
+
+    logger.info(`[Debug] Running automated integration test suite on server...`);
+
+    try {
+      const res = await fetch('/api/tests/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, token })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(errJson.error || `HTTP ${res.status}`);
+      }
+
+      const testResult = await res.json();
+      setResponse({
+        status: testResult.failed === 0 ? 200 : 500,
+        statusText: testResult.failed === 0 ? `OK (${testResult.passed}/${testResult.total} Tests Passed)` : `FAILED (${testResult.failed} Failures)`,
+        headers: [
+          ['X-Source', 'Automated Test Runner (scripts/test-runner.ts)'],
+          ['X-Duration', `${testResult.durationMs}ms`],
+          ['X-Pass-Rate', `${testResult.passed} / ${testResult.total}`]
+        ],
+        data: testResult,
+        isTestReport: true
+      });
+      logger.info(`[Debug] Test suite finished: ${testResult.passed} passed, ${testResult.failed} failed`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to execute test suite');
+      logger.error(`[Debug] Test suite run failed`, err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadPreset = (preset: typeof PRESETS[0]) => {
       setEndpoint(preset.endpoint);
       setMethod(preset.method);
@@ -176,15 +216,15 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {/* Header */}
       <div className="bg-slate-900 text-white px-6 py-4 flex items-center gap-4 shadow-md shrink-0">
-        <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-full transition" title="Return to previous screen">
+        <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-full transition cursor-pointer" title="Return to previous screen">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Wifi className="w-5 h-5 text-blue-400" />
-            API Debugger
+            API Debugger & Diagnostics
           </h1>
-          <p className="text-xs text-slate-400">Test Canvas LMS API endpoints directly</p>
+          <p className="text-xs text-slate-400">Test Canvas LMS API endpoints and run automated verification suites</p>
         </div>
       </div>
 
@@ -194,29 +234,42 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
            {/* Presets */}
            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
               <h3 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2">
-                 <Bolt className="w-4 h-4" /> Quick Actions
+                 <Bolt className="w-4 h-4" /> Quick Actions & Diagnostics
               </h3>
               <div className="grid grid-cols-2 gap-2">
+                 <button 
+                    type="button"
+                    onClick={handleRunTestSuite}
+                    disabled={loading}
+                    className="text-left text-xs p-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition border border-emerald-300 font-bold flex items-center gap-2 col-span-2 cursor-pointer shadow-2xs"
+                    title="Run the automated test suite (all 65 tests) directly in the app without AI chat"
+                 >
+                    <FlaskConical className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="truncate">Run Automated Test Suite (65 Tests)</span>
+                 </button>
                  {PRESETS.map((p, i) => (
                     <button 
                       key={i}
+                      type="button"
                       onClick={() => loadPreset(p)}
-                      className="text-left text-xs p-2 rounded bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 transition border border-slate-100 truncate"
+                      className="text-left text-xs p-2 rounded bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 transition border border-slate-100 truncate cursor-pointer"
                       title={`Load preset: ${p.name}`}
                     >
                        {p.name}
                     </button>
                  ))}
                  <button 
+                    type="button"
                     onClick={handleListSaves}
-                    className="text-left text-xs p-2 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition border border-indigo-100 truncate font-medium flex items-center gap-2"
+                    className="text-left text-xs p-2 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition border border-indigo-100 truncate font-medium flex items-center gap-2 cursor-pointer"
                     title="List application save files found in Canvas storage"
                  >
                     <FolderOpen className="w-3 h-3" /> List Save Files
                  </button>
                  <button 
+                    type="button"
                     onClick={handleFetchCalendarEvents}
-                    className="text-left text-xs p-2 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 transition border border-purple-200 truncate font-medium flex items-center gap-2 col-span-2"
+                    className="text-left text-xs p-2 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 transition border border-purple-200 truncate font-medium flex items-center gap-2 col-span-2 cursor-pointer"
                     title="Fetch and diagnose calendar events across Canvas upcoming_events and calendar_events endpoints"
                  >
                     <Calendar className="w-3.5 h-3.5 text-purple-600 shrink-0" />
@@ -340,7 +393,74 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
                </div>
              )}
 
-             {response && !loading && (
+             {response && !loading && response.isTestReport && (
+                <div className="space-y-4 font-sans">
+                  <div className="p-4 bg-slate-900 text-white rounded-xl shadow-xs flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${response.data.failed === 0 ? 'bg-emerald-600' : 'bg-rose-600'}`}>
+                        {response.data.failed === 0 ? <CheckCircle2 className="w-5 h-5 text-white" /> : <XCircle className="w-5 h-5 text-white" />}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm">
+                          {response.data.failed === 0 ? 'All Integration Tests Passed' : `${response.data.failed} Tests Failed`}
+                        </h4>
+                        <p className="text-xs text-slate-300">
+                          {response.data.passed} of {response.data.total} assertions passed across 7 test suites ({response.data.durationMs}ms)
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRunTestSuite}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition cursor-pointer"
+                    >
+                      Re-run Suite
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {Array.from(new Set(response.data.results.map((r: any) => r.suite))).map((suiteName: any) => {
+                      const suiteResults = response.data.results.filter((r: any) => r.suite === suiteName);
+                      const allPassed = suiteResults.every((r: any) => r.passed);
+                      return (
+                        <div key={suiteName} className="border border-slate-200 rounded-xl bg-white overflow-hidden shadow-2xs">
+                          <div className={`px-3.5 py-2 border-b flex items-center justify-between text-xs font-bold ${
+                            allPassed ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-rose-50 border-rose-200 text-rose-900'
+                          }`}>
+                            <span>{suiteName}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                              allPassed ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {suiteResults.filter((r: any) => r.passed).length} / {suiteResults.length} passed
+                            </span>
+                          </div>
+                          <div className="divide-y divide-slate-100 font-mono text-xs">
+                            {suiteResults.map((r: any, idx: number) => (
+                              <div key={idx} className="p-2.5 flex items-start gap-2.5 hover:bg-slate-50/50">
+                                {r.passed ? (
+                                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                ) : (
+                                  <XCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <span className={r.passed ? 'text-slate-700' : 'text-rose-700 font-semibold'}>
+                                    {r.message}
+                                  </span>
+                                  {r.error && (
+                                    <p className="text-[11px] text-rose-600 mt-0.5">{r.error}</p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+             {response && !loading && !response.isTestReport && (
                <>
                  <div className="text-slate-400 mb-2 select-none border-b border-slate-200 pb-1 font-bold">Headers</div>
                  <div className="grid grid-cols-1 gap-1 mb-4">

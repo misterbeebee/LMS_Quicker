@@ -90,6 +90,8 @@ export interface CanvasCourse {
   end_at?: string;
   is_favorite?: boolean;
   term?: CanvasTerm;
+  nickname?: string;
+  original_name?: string;
 }
 
 export interface CanvasSubmissionComment {

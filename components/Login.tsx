@@ -392,7 +392,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
           <div className="h-16 w-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
             {mode === 'UNLOCK' ? <Lock className="w-8 h-8 text-white" /> : <Unlock className="w-8 h-8 text-white" />}
           </div>
-          <h1 className="text-2xl font-bold text-slate-800">Canvas Quicker</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Velm - LMS UIEvent</h1>
           <p className="text-slate-500 mt-2 text-sm">
             {mode === 'UNLOCK' 
               ? (studentDisplayName ? `Welcome back, ${studentDisplayName}! Unlock your session.` : 'Welcome back! Unlock your session.') 

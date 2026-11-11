@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "canvas-quicker",
+      "name": "velm-lms-ui",
       "dependencies": {
         "@google/genai": "^1.30.0",
         "express": "^5.2.1",

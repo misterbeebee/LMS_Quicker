@@ -18,7 +18,7 @@ import {
   MapPin,
   RefreshCw
 } from 'lucide-react';
-import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, linkifyHtml } from '../../utils/dashboard-helpers';
+import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, linkifyHtml, formatPoints } from '../../utils/dashboard-helpers';
 
 interface AssignmentDetailFlipSideProps {
   assignment: CanvasAssignment;
@@ -136,7 +136,7 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
       <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded uppercase tracking-wider truncate max-w-[200px]">
+            <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded truncate max-w-[200px]">
               {courseName}
             </span>
             {assignment.is_calendar_event && (
@@ -208,7 +208,7 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
         {!assignment.is_calendar_event && (
           <div className="flex items-center gap-1 font-medium">
             <span className="text-slate-400">Points:</span>
-            <span className="text-slate-800 font-semibold">{assignment.points_possible || 0} pts</span>
+            <span className="text-slate-800 font-semibold">{formatPoints(assignment.points_possible || 0)}</span>
           </div>
         )}
 
@@ -352,14 +352,14 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pb-1 border-b border-slate-100">
                   <span>Grading Criteria</span>
-                  <span>Total Rubric: {detail?.rubric_settings?.points_possible || assignment.points_possible} pts</span>
+                  <span>Total Rubric: {formatPoints(detail?.rubric_settings?.points_possible || assignment.points_possible)}</span>
                 </div>
                 {detail?.rubric?.map((item, idx) => (
                   <div key={item.id || idx} className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/70 space-y-1.5">
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-semibold text-slate-800 text-xs">{item.description}</span>
                       <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] shrink-0 border border-blue-100">
-                        {item.points} pts
+                        {formatPoints(item.points)}
                       </span>
                     </div>
                     {item.long_description && (
@@ -369,7 +369,7 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5 mt-2 pt-1.5 border-t border-slate-200/60">
                         {item.ratings.map((rating, rIdx) => (
                           <div key={rating.id || rIdx} className="bg-white p-1.5 rounded border border-slate-100 text-[10px]">
-                            <div className="font-bold text-slate-700">{rating.points} pts</div>
+                            <div className="font-bold text-slate-700">{formatPoints(rating.points)}</div>
                             <div className="text-slate-500 leading-tight truncate" title={rating.description}>
                               {rating.description || 'Level'}
                             </div>

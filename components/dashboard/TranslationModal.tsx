@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { X, Languages, ExternalLink, Copy, Check, Loader2, AlertCircle, Sparkles } from 'lucide-react';
+import { X, Languages, ExternalLink, Copy, Check, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { 
   WorldLanguageMatch, 
   generateGoogleTranslateUrl, 
-  translateTextWithFreeApi, 
+  translateItemContent,
+  getCachedTranslation,
+  computeContentHash,
   stripHtml 
 } from '../../services/translation';
 
 interface TranslationModalProps {
   isOpen: boolean;
   onClose: () => void;
+  itemId?: string | number;
   assignmentTitle: string;
   assignmentDescription?: string;
   courseName: string;
@@ -19,6 +22,7 @@ interface TranslationModalProps {
 export const TranslationModal: React.FC<TranslationModalProps> = ({
   isOpen,
   onClose,
+  itemId,
   assignmentTitle,
   assignmentDescription = '',
   courseName,
@@ -27,6 +31,7 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
   const [translatedTitle, setTranslatedTitle] = useState<string>('');
   const [translatedDescription, setTranslatedDescription] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [isCached, setIsCached] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -38,63 +43,56 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
     languageMatch.targetCode
   );
 
+  const runTranslation = async (forceRefresh = false) => {
+    setLoading(true);
+    setError(null);
+    setCopied(false);
+
+    try {
+      const result = await translateItemContent({
+        itemId,
+        title: assignmentTitle,
+        description: cleanDescription,
+        sourceLang: languageMatch.sourceCode,
+        targetLang: languageMatch.targetCode,
+        forceRefresh
+      });
+
+      setTranslatedTitle(result.translatedTitle);
+      setTranslatedDescription(result.translatedDescription);
+      setIsCached(result.fromCache);
+      if (!result.success && result.error) {
+        setError(result.error);
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to translate assignment text.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
 
-    let isMounted = true;
-    setLoading(true);
-    setError(null);
+    // Check instant cache synchronously first
+    if (itemId !== undefined) {
+      const hash = computeContentHash(assignmentTitle, cleanDescription);
+      const cached = getCachedTranslation(itemId, hash);
+      if (cached) {
+        setTranslatedTitle(cached.translatedTitle);
+        setTranslatedDescription(cached.translatedDescription);
+        setIsCached(true);
+        setLoading(false);
+        setError(null);
+        return;
+      }
+    }
+
     setTranslatedTitle('');
     setTranslatedDescription('');
-    setCopied(false);
-
-    const performTranslation = async () => {
-      try {
-        // Translate Title
-        const titleRes = await translateTextWithFreeApi(
-          assignmentTitle, 
-          languageMatch.sourceCode, 
-          languageMatch.targetCode
-        );
-
-        if (!isMounted) return;
-
-        if (titleRes.success) {
-          setTranslatedTitle(titleRes.translation);
-        }
-
-        // Translate Description if present
-        if (cleanDescription) {
-          const descRes = await translateTextWithFreeApi(
-            cleanDescription, 
-            languageMatch.sourceCode, 
-            languageMatch.targetCode
-          );
-          if (isMounted) {
-            if (descRes.success) {
-              setTranslatedDescription(descRes.translation);
-            } else if (!titleRes.success) {
-              setError(descRes.error || 'Translation service temporarily unavailable.');
-            }
-          }
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setError(err?.message || 'Failed to translate assignment text.');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    performTranslation();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isOpen, assignmentTitle, assignmentDescription, languageMatch]);
+    setIsCached(false);
+    runTranslation(false);
+  }, [isOpen, itemId, assignmentTitle, assignmentDescription, languageMatch.sourceCode]);
 
   const handleCopy = () => {
     const text = `${translatedTitle || assignmentTitle}\n\n${translatedDescription || cleanDescription}`;
@@ -120,6 +118,11 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200/60">
                   {languageMatch.badgeText}
                 </span>
+                {isCached && !loading && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Saved in Cache ✓
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 Class: <span className="font-medium text-slate-700">{courseName}</span> · {languageMatch.languageName}
@@ -127,14 +130,25 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
-            title="Close translation"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => runTranslation(true)}
+              disabled={loading}
+              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+              title="Refresh / re-translate from service"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
+              title="Close translation"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
@@ -143,7 +157,7 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
           {loading && (
             <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-100 text-indigo-700 text-xs flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-              <span>Translating assignment instructions from {languageMatch.languageName} to English...</span>
+              <span>Translating instructions from {languageMatch.languageName} to English (parallel fetch)...</span>
             </div>
           )}
 
@@ -176,12 +190,12 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
               </div>
 
               <div className="p-3.5 rounded-xl bg-indigo-50/50 border border-indigo-100">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> English Translation
+                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-1 flex items-center gap-1">
+                  <Languages className="w-3 h-3 text-indigo-600" /> English Translation
                 </div>
                 <div className="font-semibold text-slate-900 text-sm">
                   {loading ? (
-                    <span className="text-slate-400 italic font-normal text-xs">Translating...</span>
+                    <span className="text-slate-400 italic font-normal text-xs">Translating title...</span>
                   ) : (
                     translatedTitle || <span className="text-slate-400 italic text-xs font-normal">Same as original</span>
                   )}
@@ -201,12 +215,12 @@ export const TranslationModal: React.FC<TranslationModalProps> = ({
               </div>
 
               <div className="p-3.5 rounded-xl bg-indigo-50/50 border border-indigo-100">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-1.5 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> English Instructions
+                <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-1.5 flex items-center gap-1">
+                  <Languages className="w-3 h-3 text-indigo-600" /> English Instructions
                 </div>
                 <div className="text-xs text-slate-800 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto custom-scrollbar">
                   {loading ? (
-                    <span className="text-slate-400 italic font-normal text-xs">Translating content...</span>
+                    <span className="text-slate-400 italic font-normal text-xs">Translating instructions...</span>
                   ) : translatedDescription ? (
                     translatedDescription
                   ) : (

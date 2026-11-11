@@ -12,22 +12,29 @@ import {
   FileQuestion
 } from 'lucide-react';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
-import { cleanAssignmentDescription, linkifyHtml } from '../../utils/dashboard-helpers';
+import { cleanAssignmentDescription, linkifyHtml, formatPoints, formatRelativeDueDate } from '../../utils/dashboard-helpers';
 import { CourseCustomization } from '../../services/courseCustomization';
+import { CourseData } from '../../types';
+import { useNow } from '../../utils/useRelativeTime';
 
 interface CanvasToDoProps {
   items: CanvasTodoItem[];
   onMarkDone: (item: CanvasTodoItem) => Promise<void>;
   showIds?: boolean;
   courseCustomizations?: Record<number, CourseCustomization>;
+  getCourseName?: (id: number) => string;
+  courses?: CourseData[];
 }
 
 export const CanvasToDo: React.FC<CanvasToDoProps> = ({ 
   items, 
   onMarkDone, 
   showIds = false,
-  courseCustomizations = {}
+  courseCustomizations = {},
+  getCourseName,
+  courses = []
 }) => {
+  const now = useNow();
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
@@ -96,10 +103,17 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
           const isExpanded = expandedKeys.has(uniqueKey);
 
           const title = item.assignment?.name || item.quiz?.title || 'Canvas To-Do Item';
+          const courseId = item.course_id || item.assignment?.course_id || item.context_id;
+          const matchedCourse = !courseId && courses.length > 0 && item.context_name 
+            ? courses.find(c => c.course.name === item.context_name || c.course.course_code === item.context_name)
+            : undefined;
+          const resolvedCourseId = courseId || matchedCourse?.course.id;
+
+          const customCourse = resolvedCourseId ? courseCustomizations[resolvedCourseId] : undefined;
           const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
-          const courseId = item.course_id || item.assignment?.course_id;
-          const customCourse = courseId ? courseCustomizations[courseId] : undefined;
-          const courseName = customCourse?.abbreviation || rawCourseName;
+          const courseName = (resolvedCourseId && getCourseName)
+            ? getCourseName(resolvedCourseId)
+            : (customCourse?.abbreviation || rawCourseName);
           const emoji = customCourse?.emoji;
 
           const rawDesc = item.assignment?.description || item.quiz?.description;
@@ -114,17 +128,20 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
             <div 
               key={uniqueKey} 
               onClick={() => hasBodyContent && toggleExpand(uniqueKey)}
-              className={`bg-white rounded-xl shadow-xs border border-slate-200/90 border-l-4 border-l-blue-500 hover:shadow-md hover:border-slate-300 transition-all group flex flex-col justify-between overflow-hidden ${
+              className={`relative bg-white rounded-xl shadow-xs border border-slate-200/90 hover:shadow-md hover:border-slate-300 transition-all group flex flex-col justify-between overflow-hidden ${
                 hasBodyContent ? 'cursor-pointer' : ''
               } ${isExpanded ? 'ring-2 ring-blue-100' : ''}`}
               title={hasBodyContent ? (isExpanded ? "Click to collapse instructions" : "Click to view instructions") : undefined}
             >
+              {/* Flat left accent stripe (replaces border-l-4 to eliminate C-shape curve and tip hooks) */}
+              <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-400/80 pointer-events-none z-10" />
+
               {/* Top bonded header bar */}
               <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 text-[11px] gap-2">
                 {/* Course Name & Badges bonded flush to top-left */}
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   <span 
-                    className="font-bold text-slate-700 uppercase tracking-wider truncate max-w-[170px]" 
+                    className="font-semibold text-slate-800 text-xs truncate max-w-[170px]" 
                     title={rawCourseName}
                   >
                     {emoji ? `${emoji} ` : ''}{courseName}
@@ -153,7 +170,7 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
                 <div className="flex items-center gap-1.5 shrink-0">
                   {points !== undefined && points !== null && (
                     <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap bg-slate-100 text-slate-600 border border-slate-200/80">
-                      {points} pts
+                      {formatPoints(points)}
                     </span>
                   )}
                   {item.html_url && (
@@ -208,9 +225,7 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
                 <div className="flex items-center gap-1.5 min-w-0">
                   <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                   <span className="font-medium truncate">
-                    {date ? (
-                      new Date(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-                    ) : 'No Due Date'}
+                    {date ? formatRelativeDueDate(date, now) : 'No Due Date'}
                   </span>
                 </div>
 

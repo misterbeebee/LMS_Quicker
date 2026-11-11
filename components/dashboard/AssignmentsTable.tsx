@@ -1,15 +1,17 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { CanvasAssignment, CanvasTodoItem, SortKey, SortConfig, FilterMode } from '../../types';
+import { CanvasAssignment, CanvasTodoItem, SortKey, SortConfig, FilterMode, CourseData } from '../../types';
 import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, CheckCircle2, Megaphone, Loader2 } from 'lucide-react';
-import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments } from '../../utils/dashboard-helpers';
+import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentDetailFlipSide } from './AssignmentDetailFlipSide';
 import { AssignmentZoomModal } from './AssignmentZoomModal';
 import { TranslationModal } from './TranslationModal';
-import { detectWorldLanguage, WorldLanguageMatch } from '../../services/translation';
+import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslationInProgress } from '../../services/translation';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
+import { CourseCustomization } from '../../services/courseCustomization';
+import { useNow } from '../../utils/useRelativeTime';
 
 interface AssignmentsTableProps {
   assignments: CanvasAssignment[];
@@ -42,6 +44,8 @@ interface AssignmentsTableProps {
   onOpenGradeSettings?: () => void;
   todoItems?: CanvasTodoItem[];
   onMarkTodoDone?: (item: CanvasTodoItem) => void;
+  courseCustomizations?: Record<number, CourseCustomization>;
+  courses?: CourseData[];
 }
 
 export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
@@ -49,6 +53,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   showIds,
   showCourseColumn,
   getCourseName,
+  courseCustomizations,
   archivedAssignmentIds,
   onToggleArchived,
   onToggleMarkedSubmitted,
@@ -74,8 +79,10 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   gradeConfig = DEFAULT_GRADE_CONFIG,
   onOpenGradeSettings,
   todoItems = [],
-  onMarkTodoDone
+  onMarkTodoDone,
+  courses = []
 }) => {
+  const now = useNow();
   const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
   const [workflowSection, setWorkflowSection] = useState<'upcoming' | 'completed'>('upcoming');
   const [isTodoExpanded, setIsTodoExpanded] = useState(false);
@@ -85,11 +92,19 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   const [confirmingTableAckAll, setConfirmingTableAckAll] = useState(false);
   const [localFilterFeedback, setLocalFilterFeedback] = useState(false);
   const [translatingItem, setTranslatingItem] = useState<{
+    itemId?: string | number;
     assignmentTitle: string;
     assignmentDescription?: string;
     courseName: string;
     languageMatch: WorldLanguageMatch;
   } | null>(null);
+  const [, setTransVersion] = useState(0);
+
+  React.useEffect(() => {
+    const handler = () => setTransVersion(v => v + 1);
+    window.addEventListener('canvas:translation_changed', handler);
+    return () => window.removeEventListener('canvas:translation_changed', handler);
+  }, []);
   
   const activeFilterFeedback = onToggleFilterFeedback ? filterFeedbackOnly : localFilterFeedback;
   const toggleFeedbackFilter = onToggleFilterFeedback ? () => onToggleFilterFeedback(!filterFeedbackOnly) : () => setLocalFilterFeedback(!localFilterFeedback);
@@ -540,7 +555,11 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
               {todoItems.map((item, idx) => {
                 const uniqueKey = item.ignore || item.html_url || String(idx);
                 const title = item.assignment?.name || item.quiz?.title || 'Canvas ToDo';
-                const courseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+                const courseId = item.course_id || item.assignment?.course_id || item.context_id;
+                const customCourse = courseId ? courseCustomizations?.[courseId] : undefined;
+                const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+                const courseName = courseId ? getCourseName(courseId) : (customCourse?.abbreviation || rawCourseName);
+                const emoji = customCourse?.emoji;
                 const dueAt = item.assignment?.due_at || null;
                 const points = item.assignment?.points_possible;
                 const isProcessing = processingTodoKey === uniqueKey;
@@ -548,17 +567,20 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                 return (
                   <div
                     key={uniqueKey}
-                    className="rounded-xl border border-blue-200/90 border-l-4 border-l-blue-500 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
+                    className="relative rounded-xl border border-slate-200/90 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
                   >
+                    {/* Flat left accent stripe (replaces border-l-4 to eliminate C-shape curve and tip hooks) */}
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-400/80 pointer-events-none z-10" />
+
                     {/* Top bonded header */}
                     <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/90 border-b border-slate-100 text-[11px] gap-2">
-                      <span className="text-[10px] font-bold text-slate-700 uppercase tracking-wider truncate max-w-[140px]" title={courseName}>
-                        {courseName}
+                      <span className="text-xs font-semibold text-slate-800 truncate max-w-[140px]" title={courseName}>
+                        {emoji ? `${emoji} ` : ''}{courseName}
                       </span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         {points !== undefined && (
                           <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 rounded-full">
-                            {points} pts
+                            {formatPoints(points)}
                           </span>
                         )}
                         {item.html_url && (
@@ -587,7 +609,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                       <div className="flex items-center gap-1 min-w-0">
                         <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
                         <span className="font-medium text-[11px] truncate">
-                          {dueAt ? new Date(dueAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : 'No Due Date'}
+                          {dueAt ? formatRelativeDueDate(dueAt, now) : 'No Due Date'}
                         </span>
                       </div>
 
@@ -758,23 +780,52 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                         {(() => {
                           const langMatch = detectWorldLanguage(courseName);
                           if (langMatch.isLanguageCourse && !assignment.is_calendar_event) {
+                            const isTranslated = isItemTranslated(assignment.id);
+                            const isTranslating = isTranslationInProgress(assignment.id);
                             return (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setTranslatingItem({
+                                    itemId: assignment.id,
                                     assignmentTitle: assignment.name,
                                     assignmentDescription: assignment.description,
                                     courseName,
                                     languageMatch: langMatch
                                   });
                                 }}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 transition cursor-pointer shrink-0 shadow-2xs"
-                                title={`Translate ${langMatch.languageName} assignment to English`}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer shrink-0 shadow-2xs ${
+                                  isTranslating
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-300 animate-pulse'
+                                    : isTranslated
+                                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700'
+                                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80'
+                                }`}
+                                title={
+                                  isTranslating 
+                                    ? 'Translating assignment in background...'
+                                    : isTranslated 
+                                      ? `Translation ready! Click to view instant English translation (${langMatch.languageName})`
+                                      : `Translate ${langMatch.languageName} assignment to English`
+                                }
                               >
-                                <Languages className="w-3 h-3 text-indigo-600" />
-                                <span>{langMatch.badgeText}</span>
+                                {isTranslating ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                                    <span>Translating...</span>
+                                  </>
+                                ) : isTranslated ? (
+                                  <>
+                                    <Languages className="w-3 h-3 text-emerald-200" />
+                                    <span>{langMatch.badgeText} ✓</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Languages className="w-3 h-3 text-indigo-600" />
+                                    <span>{langMatch.badgeText}</span>
+                                  </>
+                                )}
                               </button>
                             );
                           }
@@ -832,12 +883,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                     </td>
                     <td className="py-2.5 px-3 text-xs text-slate-600">
                       {assignment.due_at ? (
-                          <div className="flex flex-col">
-                              <span className="font-medium">{new Date(assignment.due_at).toLocaleDateString()}</span>
-                              {!isPastDue && (
-                                <span className="text-[10px] text-slate-400">{new Date(assignment.due_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                              )}
-                          </div>
+                        <span className="font-medium text-slate-700">{formatRelativeDueDate(assignment.due_at, now)}</span>
                       ) : <span className="text-slate-400 italic">No Due Date</span>}
                     </td>
                     <td className="py-2.5 px-3">
@@ -849,28 +895,24 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                           
                           {!assignment.is_calendar_event && onToggleMarkedSubmitted && !isRealSubmitted && (
                              <label 
-                                  className={`inline-flex items-center gap-1 cursor-pointer select-none px-2 py-0.5 rounded-md border text-[10px] font-medium transition ${
-                                    assignment.manual_marked_submitted
-                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:border-emerald-300'
-                                      : (isClasswork || isPassive || showMaybeSubmitted)
-                                        ? 'bg-amber-50 text-amber-900 border-amber-200/90 hover:border-amber-300 hover:bg-amber-100/60'
-                                        : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-blue-300 hover:bg-slate-100/70'
-                                  }`}
-                                  onClick={(e) => e.stopPropagation()}
-                                  title={
-                                    isClasswork
-                                      ? (assignment.manual_marked_submitted ? "Classwork completed on paper (marked submitted)" : "Classwork completed on paper — click to mark submitted")
-                                      : (isPassive || showMaybeSubmitted)
-                                        ? (assignment.manual_marked_submitted ? "Paper/external work (marked submitted)" : "Paper/external submission — click to mark submitted")
-                                        : (assignment.manual_marked_submitted ? "Marked submitted" : "Click to mark as submitted")
-                                  }
+                               className="inline-flex items-center gap-1 cursor-pointer select-none text-[11px] text-slate-500 hover:text-slate-800 transition"
+                               onClick={(e) => e.stopPropagation()}
+                               title={
+                                 isClasswork
+                                   ? (assignment.manual_marked_submitted ? "Classwork completed on paper (marked submitted)" : "Classwork completed on paper — click to mark submitted")
+                                   : (isPassive || showMaybeSubmitted)
+                                     ? (assignment.manual_marked_submitted ? "Paper/external work (marked submitted)" : "Paper/external submission — click to mark submitted")
+                                     : (assignment.manual_marked_submitted ? "Marked submitted" : "Click to mark as submitted")
+                               }
                              >
-                                 <span>{assignment.manual_marked_submitted ? 'Submitted' : 'Submitted?'}</span>
+                                 <span className={assignment.manual_marked_submitted ? 'text-emerald-700 font-medium' : 'text-slate-500'}>
+                                   {assignment.manual_marked_submitted ? 'Submitted' : 'Submitted?'}
+                                 </span>
                                  <input
                                       type="checkbox"
                                       checked={!!assignment.manual_marked_submitted}
                                       onChange={() => onToggleMarkedSubmitted(assignment.id)}
-                                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3 h-3 cursor-pointer ml-0.5"
+                                      className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer accent-emerald-600 ml-0.5"
                                  />
                              </label>
                           )}
@@ -991,6 +1033,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         onAcknowledgeAllComments={onAcknowledgeAllComments}
         gradeConfig={gradeConfig}
         onOpenGradeSettings={onOpenGradeSettings}
+        courseModules={zoomedAssignment && courses ? (courses.find(c => c.course.id === zoomedAssignment.course_id)?.modules || []) : []}
       />
 
       {/* World Language Translation Modal */}
@@ -998,6 +1041,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         <TranslationModal
           isOpen={true}
           onClose={() => setTranslatingItem(null)}
+          itemId={translatingItem.itemId}
           assignmentTitle={translatingItem.assignmentTitle}
           assignmentDescription={translatingItem.assignmentDescription}
           courseName={translatingItem.courseName}

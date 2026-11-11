@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CanvasAssignment, CanvasSubmissionComment } from '../types';
-import { CheckCircle, Clock, AlertCircle, Calendar, MessageSquare } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, Calendar, MessageSquare, Lock } from 'lucide-react';
 
 // Helper to strip HTML tags for clean text display
 export const stripHtml = (html: string | null | undefined) => {
@@ -16,10 +16,11 @@ export const isFillerDescription = (text: string | null | undefined): boolean =>
   if (!text) return true;
   const normalized = text.toLowerCase().replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   if (!normalized) return true;
-  if (normalized.includes('detailed guidelines, grading criteria, and instructions from the course syllabus')) {
-    return true;
-  }
-  return false;
+  // If the description ONLY contains boilerplate guidelines without real assignment instructions
+  const withoutBoilerplate = normalized
+    .replace(/detailed guidelines, grading criteria, and instructions from the course syllabus\.?/gi, '')
+    .trim();
+  return withoutBoilerplate.length === 0;
 };
 
 // Clean instructions HTML, suppressing filler and returning empty string if no real content
@@ -352,6 +353,50 @@ export const getAssignmentStatus = (assignment: CanvasAssignment) => {
   }
 
   return { label: 'Pending', color: 'bg-slate-100 text-slate-600', icon: Clock };
+};
+
+// Helper to format points with proper singular/plural grammar ("1 pt" vs "X pts")
+export const formatPoints = (pts: number | null | undefined): string => {
+  if (pts === null || pts === undefined) return '';
+  return pts === 1 ? '1 pt' : `${pts} pts`;
+};
+
+// Helper to format dates with relative "Today, [time]" / "Tomorrow, [time]" for imminent dates
+export const formatRelativeDueDate = (dateStr: string | null, now: Date = new Date()): string => {
+  if (!dateStr) return 'No due date';
+  const target = new Date(dateStr);
+  if (isNaN(target.getTime())) return 'No due date';
+
+  // Compare calendar dates (midnight to midnight)
+  const nowDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetDate = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const diffDays = Math.round((targetDate.getTime() - nowDate.getTime()) / (1000 * 60 * 60 * 24));
+
+  // Time formatter (e.g., "11:59 PM")
+  const hasTime = target.getHours() !== 0 || target.getMinutes() !== 0;
+  const timeStr = hasTime 
+    ? target.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) 
+    : '';
+
+  if (diffDays === 0) {
+    return timeStr ? `Today, ${timeStr}` : 'Today';
+  }
+  if (diffDays === 1) {
+    return timeStr ? `Tomorrow, ${timeStr}` : 'Tomorrow';
+  }
+  if (diffDays === -1) {
+    return timeStr ? `Yesterday, ${timeStr}` : 'Yesterday';
+  }
+  
+  // Future dates within 6 days: show day of week e.g. "Wed, Nov 12"
+  if (diffDays > 1 && diffDays <= 6) {
+    const weekday = target.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    return timeStr ? `${weekday}, ${timeStr}` : weekday;
+  }
+
+  // Otherwise standard short date: "Nov 15" or "Nov 15, 11:59 PM"
+  const formatted = target.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return timeStr ? `${formatted}, ${timeStr}` : formatted;
 };
 
 // Helper to format dates - for past-due homework, time of day doesn't need to be shown

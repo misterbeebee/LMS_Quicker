@@ -188,7 +188,19 @@ export function getCourseCustomizations(studentId?: string): Record<number, Cour
   try {
     const key = `${STORAGE_KEY_PREFIX}${studentId || 'default'}`;
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : {};
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+    // Fallback to default if student-specific record is empty
+    if (studentId && studentId !== 'default') {
+      const defaultRaw = localStorage.getItem(`${STORAGE_KEY_PREFIX}default`);
+      if (defaultRaw) {
+        const parsed = JSON.parse(defaultRaw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    }
+    return {};
   } catch (e) {
     console.error('Failed to load course customizations', e);
     return {};
@@ -211,6 +223,8 @@ export function saveCourseCustomization(
     };
     const key = `${STORAGE_KEY_PREFIX}${studentId || 'default'}`;
     localStorage.setItem(key, JSON.stringify(updated));
+    // Also update default key so any session or fallback can access it
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}default`, JSON.stringify(updated));
     return updated;
   } catch (e) {
     console.error('Failed to save course customization', e);
@@ -222,7 +236,18 @@ export function getSavedCourseOrder(studentId?: string): number[] {
   try {
     const key = `${ORDER_KEY_PREFIX}${studentId || 'default'}`;
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+    if (studentId && studentId !== 'default') {
+      const defaultRaw = localStorage.getItem(`${ORDER_KEY_PREFIX}default`);
+      if (defaultRaw) {
+        const parsed = JSON.parse(defaultRaw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    }
+    return [];
   } catch (e) {
     console.error('Failed to load course order', e);
     return [];
@@ -233,6 +258,7 @@ export function saveCourseOrder(order: number[], studentId?: string): void {
   try {
     const key = `${ORDER_KEY_PREFIX}${studentId || 'default'}`;
     localStorage.setItem(key, JSON.stringify(order));
+    localStorage.setItem(`${ORDER_KEY_PREFIX}default`, JSON.stringify(order));
   } catch (e) {
     console.error('Failed to save course order', e);
   }
@@ -245,8 +271,23 @@ export function saveCourseCustomizationsBulk(
   try {
     const key = `${STORAGE_KEY_PREFIX}${studentId || 'default'}`;
     const current = getCourseCustomizations(studentId);
-    const merged = { ...current, ...customizations };
+    const merged: Record<number, CourseCustomization> = { ...current };
+
+    // Deep merge each course's properties and normalize string/number keys from JSON
+    if (customizations && typeof customizations === 'object') {
+      for (const [idStr, custom] of Object.entries(customizations)) {
+        const numId = Number(idStr);
+        if (!isNaN(numId) && custom && typeof custom === 'object') {
+          merged[numId] = {
+            ...(merged[numId] || {}),
+            ...custom
+          };
+        }
+      }
+    }
+
     localStorage.setItem(key, JSON.stringify(merged));
+    localStorage.setItem(`${STORAGE_KEY_PREFIX}default`, JSON.stringify(merged));
     return merged;
   } catch (e) {
     console.error('Failed to save bulk course customizations', e);

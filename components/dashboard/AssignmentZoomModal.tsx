@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { CanvasAssignment, CanvasAssignmentDetail } from '../../types';
+import { CanvasAssignment, CanvasAssignmentDetail, CanvasModule, CanvasModuleItem } from '../../types';
 import { fetchAssignmentDetails, getCachedAssignmentDetail } from '../../services/canvas';
 import { 
   X, 
@@ -18,12 +18,17 @@ import {
   Maximize2,
   Check,
   Settings,
-  Languages
+  Languages,
+  BookOpen,
+  Search,
+  Download,
+  FileQuestion
 } from 'lucide-react';
-import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, getAssignmentLockInfo, linkifyHtml, getAssignmentFeedbackComments } from '../../utils/dashboard-helpers';
+import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, getAssignmentLockInfo, linkifyHtml, getAssignmentFeedbackComments, formatPoints } from '../../utils/dashboard-helpers';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { TranslationModal } from './TranslationModal';
-import { detectWorldLanguage } from '../../services/translation';
+import { detectWorldLanguage, isItemTranslated, isTranslationInProgress } from '../../services/translation';
+import { findRelatedModuleContent, RelatedModuleContentMatch } from '../../utils/moduleSearch';
 
 interface AssignmentZoomModalProps {
   assignment: CanvasAssignment | null;
@@ -37,6 +42,7 @@ interface AssignmentZoomModalProps {
   onAcknowledgeAllComments?: (commentIds: (string | number)[]) => void;
   gradeConfig?: GradeScaleConfig;
   onOpenGradeSettings?: () => void;
+  courseModules?: CanvasModule[];
 }
 
 export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
@@ -50,7 +56,8 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   onToggleAcknowledgeComment,
   onAcknowledgeAllComments,
   gradeConfig = DEFAULT_GRADE_CONFIG,
-  onOpenGradeSettings
+  onOpenGradeSettings,
+  courseModules = []
 }) => {
   if (!assignment) return null;
 
@@ -61,9 +68,41 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   const isInitiallySubmitted = isAssignmentSubmitted(assignment);
   const initialComments = getAssignmentFeedbackComments(assignment);
   const [confirmingAcknowledgeAll, setConfirmingAcknowledgeAll] = useState(false);
-  const [activeTab, setActiveTab] = useState<'instructions' | 'rubric' | 'feedback'>(() => {
+  const [showTranslationModal, setShowTranslationModal] = useState(false);
+  const [, setTransVersion] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setTransVersion(v => v + 1);
+    window.addEventListener('canvas:translation_changed', handler);
+    return () => window.removeEventListener('canvas:translation_changed', handler);
+  }, []);
+
+  const [activeTab, setActiveTab] = useState<'instructions' | 'rubric' | 'feedback' | 'modules'>(() => {
     return (initialComments.length > 0 || isInitiallySubmitted) ? 'feedback' : 'instructions';
   });
+  const [moduleSearchQuery, setModuleSearchQuery] = useState('');
+
+  const relatedMatches = React.useMemo(() => {
+    if (!assignment || !courseModules || courseModules.length === 0) return [];
+    return findRelatedModuleContent(assignment, courseModules);
+  }, [assignment, courseModules]);
+
+  const searchedModuleItems = React.useMemo(() => {
+    if (!moduleSearchQuery.trim() || !courseModules) return [];
+    const q = moduleSearchQuery.toLowerCase();
+    const results: { module: CanvasModule; item: CanvasModuleItem }[] = [];
+    courseModules.forEach(mod => {
+      (mod.items || []).forEach(item => {
+        if (item.type !== 'SubHeader' && (
+          (item.title && item.title.toLowerCase().includes(q)) ||
+          (mod.name && mod.name.toLowerCase().includes(q))
+        )) {
+          results.push({ module: mod, item });
+        }
+      });
+    });
+    return results;
+  }, [moduleSearchQuery, courseModules]);
 
   useEffect(() => {
     const isSub = isAssignmentSubmitted(assignment);
@@ -197,6 +236,51 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
               <span className="text-xs font-mono text-slate-400 bg-white border border-slate-200 px-2 py-0.5 rounded">
                 #{Math.abs(assignment.id)}
               </span>
+              {(() => {
+                const langMatch = detectWorldLanguage(courseName);
+                if (langMatch.isLanguageCourse && !assignment.is_calendar_event) {
+                  const isTranslated = isItemTranslated(assignment.id);
+                  const isTranslating = isTranslationInProgress(assignment.id);
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setShowTranslationModal(true)}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold transition cursor-pointer shrink-0 shadow-2xs ${
+                        isTranslating
+                          ? 'bg-amber-50 text-amber-800 border border-amber-300 animate-pulse'
+                          : isTranslated
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700'
+                            : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80'
+                      }`}
+                      title={
+                        isTranslating 
+                          ? 'Translating assignment in background...'
+                          : isTranslated 
+                            ? `Translation ready! Click to view instant English translation (${langMatch.languageName})`
+                            : `Translate ${langMatch.languageName} assignment to English`
+                      }
+                    >
+                      {isTranslating ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                          <span>Translating...</span>
+                        </>
+                      ) : isTranslated ? (
+                        <>
+                          <Languages className="w-3.5 h-3.5 text-emerald-200" />
+                          <span>{langMatch.badgeText} Translated ✓</span>
+                        </>
+                      ) : (
+                        <>
+                          <Languages className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>{langMatch.badgeText} Translate</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                }
+                return null;
+              })()}
             </div>
             <h3 className="font-bold text-slate-900 text-lg md:text-xl leading-snug break-words" title={assignment.name}>
               {assignment.name}
@@ -251,7 +335,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
           {!assignment.is_calendar_event && (
             <div className="flex items-center gap-1.5">
               <span className="text-slate-400">Points:</span>
-              <span className="text-slate-800 font-semibold">{assignment.points_possible || 0} pts</span>
+              <span className="text-slate-800 font-semibold">{formatPoints(assignment.points_possible || 0)}</span>
             </div>
           )}
 
@@ -385,6 +469,24 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
             </button>
           )}
 
+          <button
+            type="button"
+            onClick={() => setActiveTab('modules')}
+            className={`pb-2.5 px-1.5 text-sm font-semibold border-b-2 transition flex items-center gap-2 cursor-pointer ${
+              currentTab === 'modules'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Related Resources
+            {relatedMatches.length > 0 && (
+              <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-100 text-blue-700">
+                {relatedMatches.length}
+              </span>
+            )}
+          </button>
+
           {detail?.score_statistics && (
             <div className="ml-auto hidden sm:flex items-center gap-3 text-xs text-slate-500 pr-1">
               <BarChart2 className="w-4 h-4 text-slate-400" />
@@ -437,14 +539,14 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                 <div className="space-y-3.5">
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-700 pb-2 border-b border-slate-100">
                     <span>Grading Rubric Criteria</span>
-                    <span>Total Rubric Points: {detail?.rubric_settings?.points_possible || assignment.points_possible} pts</span>
+                    <span>Total Rubric Points: {formatPoints(detail?.rubric_settings?.points_possible || assignment.points_possible)}</span>
                   </div>
                   {detail?.rubric?.map((item, idx) => (
                     <div key={item.id || idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2">
                       <div className="flex items-start justify-between gap-3">
                         <span className="font-semibold text-slate-900 text-sm">{item.description}</span>
                         <span className="font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded text-xs shrink-0 border border-blue-100">
-                          {item.points} pts
+                          {formatPoints(item.points)}
                         </span>
                       </div>
                       {item.long_description && (
@@ -454,7 +556,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2 pt-2 border-t border-slate-200/70">
                           {item.ratings.map((rating, rIdx) => (
                             <div key={rating.id || rIdx} className="bg-white p-2 rounded-lg border border-slate-200/80 text-xs">
-                              <div className="font-bold text-slate-800">{rating.points} pts</div>
+                              <div className="font-bold text-slate-800">{formatPoints(rating.points)}</div>
                               <div className="text-slate-500 text-[11px] leading-tight mt-0.5 truncate" title={rating.description}>
                                 {rating.description || 'Level'}
                               </div>
@@ -635,6 +737,184 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                   )}
                 </div>
               )}
+
+              {/* Related Modules & Resources Tab */}
+              {currentTab === 'modules' && (
+                <div className="space-y-4">
+                  {/* Proactive search header */}
+                  <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-blue-600 text-white rounded-lg shadow-2xs">
+                        <BookOpen className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-800">
+                          Related Course Modules & Learning Resources
+                        </h4>
+                        <p className="text-[11px] text-slate-500">
+                          Proactively matched lesson pages, readings, files, and practice items from <span className="font-semibold text-slate-700">{courseName}</span>
+                        </p>
+                      </div>
+                    </div>
+                    {courseModules.length > 0 && (
+                      <span className="text-[11px] font-semibold text-blue-800 bg-white border border-blue-200 px-2.5 py-0.5 rounded-full shadow-2xs">
+                        {courseModules.length} Modules in Course
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Search input */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={moduleSearchQuery}
+                      onChange={(e) => setModuleSearchQuery(e.target.value)}
+                      placeholder="Search course modules for lecture slides, study guides, readings..."
+                      className="w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition"
+                    />
+                    {moduleSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setModuleSearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Results list */}
+                  {moduleSearchQuery.trim() ? (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        Search Results ({searchedModuleItems.length})
+                      </div>
+                      {searchedModuleItems.length === 0 ? (
+                        <p className="text-xs text-slate-400 italic py-6 text-center">No module items found matching "{moduleSearchQuery}".</p>
+                      ) : (
+                        <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+                          {searchedModuleItems.map(({ module, item }) => (
+                            <div 
+                              key={`${module.id}-${item.id}`} 
+                              className="p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-xs transition flex items-center justify-between gap-3"
+                            >
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 shrink-0">
+                                  {item.type === 'File' ? <Download className="w-4 h-4 text-slate-500" /> :
+                                   item.type === 'Quiz' ? <FileQuestion className="w-4 h-4 text-purple-500" /> :
+                                   item.type === 'Assignment' ? <FileText className="w-4 h-4 text-blue-500" /> :
+                                   <BookOpen className="w-4 h-4 text-emerald-500" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-semibold text-xs text-slate-800 truncate" title={item.title}>
+                                    {item.title}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                                    Module: <span className="font-medium text-slate-600">{module.name}</span> · {item.type}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {item.html_url && (
+                                <a
+                                  href={item.html_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
+                                  title="Open directly in Canvas"
+                                >
+                                  <span>Open in Canvas</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          Proactively Matched Module Resources ({relatedMatches.length})
+                        </div>
+                        {relatedMatches.length > 0 && (
+                          <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                            Matched by Unit & Keywords
+                          </span>
+                        )}
+                      </div>
+
+                      {relatedMatches.length === 0 ? (
+                        <div className="p-8 text-center border border-dashed border-slate-200 rounded-xl bg-slate-50/50 space-y-2">
+                          <BookOpen className="w-8 h-8 text-slate-300 mx-auto" />
+                          <p className="text-xs font-semibold text-slate-700">No automatic module matches for "{assignment.name}".</p>
+                          <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                            Use the search bar above to look up lectures, formulas, or review packets across all course modules.
+                          </p>
+                          {canvasUrl && (
+                            <a
+                              href={`${canvasUrl.replace(/\/$/, '')}/courses/${assignment.course_id}/modules`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-xs transition mt-2"
+                            >
+                              <span>Browse Course Modules in Canvas</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+                          {relatedMatches.map(({ module, item, reason }) => (
+                            <div 
+                              key={`${module.id}-${item?.id}`} 
+                              className="p-3 bg-white border border-slate-200 rounded-xl hover:border-blue-300 hover:shadow-xs transition flex items-center justify-between gap-3"
+                            >
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="p-1.5 rounded-lg bg-slate-100 text-slate-600 shrink-0">
+                                  {item?.type === 'File' ? <Download className="w-4 h-4 text-slate-500" /> :
+                                   item?.type === 'Quiz' ? <FileQuestion className="w-4 h-4 text-purple-500" /> :
+                                   item?.type === 'Assignment' ? <FileText className="w-4 h-4 text-blue-500" /> :
+                                   <BookOpen className="w-4 h-4 text-emerald-500" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-xs text-slate-800 truncate" title={item?.title}>
+                                      {item?.title}
+                                    </span>
+                                    <span className="text-[10px] font-bold px-1.5 py-0.2 bg-blue-50 text-blue-700 border border-blue-200/60 rounded">
+                                      {reason}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                                    Module: <span className="font-medium text-slate-600">{module.name}</span> · {item?.type}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {item?.html_url && (
+                                <a
+                                  href={item.html_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
+                                  title="Open directly in Canvas"
+                                >
+                                  <span>Open in Canvas</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -662,6 +942,18 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
           )}
         </div>
       </div>
+
+      {showTranslationModal && (
+        <TranslationModal
+          isOpen={true}
+          onClose={() => setShowTranslationModal(false)}
+          itemId={assignment.id}
+          assignmentTitle={assignment.name}
+          assignmentDescription={detail?.description || assignment.description}
+          courseName={courseName}
+          languageMatch={detectWorldLanguage(courseName)}
+        />
+      )}
     </div>
   );
 };

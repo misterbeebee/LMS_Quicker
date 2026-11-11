@@ -163,10 +163,19 @@ Calendar events (school assemblies, exams, seminars, extracurricular meetings, a
   5. **Later & Undated**: Deadlines in subsequent weeks or without dates.
   6. **Completed & Graded**: Finished work with feedback and scores.
 - **Bonded Card Edge Architecture**:
-  - **Top Edge Banner**: Course name, event badge, translation button, lock status, and Canvas ID are bonded directly to the top card boundary (`px-3 py-1.5 bg-slate-50/90 border-b border-slate-100`), eliminating floating pill clutter.
+  - **Flat Vertical Accent Stripe**: Replaced standard rounded left borders (`border-l-4`) with an interior flat vertical accent stripe (`w-1`). This eliminates the curved "C-shape" tips that wrapped inward around rounded card corners, providing a straight, unbent scanning guide down the page.
+  - **Desaturated Accent Tones**: Replaced hyper-saturated neon border lines with refined, desaturated hues (`bg-rose-400/90` for overdue, `bg-amber-400/80` for imminent, `bg-violet-400/80` for calendar events, `bg-sky-400/80` for to-do items, and `bg-slate-300` for neutral) that guide the eye without visually screaming.
+  - **Natural-Case Course Titles**: Removed all-caps transformation (`uppercase tracking-wider`) from assignment and To-Do card banners in favor of clean natural-casing (`font-semibold text-slate-800 text-xs`) for effortless readability.
+  - **Top Edge Banner**: Course title with custom emoji, event badge, translation button, lock status, and Canvas ID are bonded directly to the top card boundary (`px-3 py-1.5 bg-slate-50/90 border-b border-slate-100`).
   - **Top-Right Score Entity**: Displays points possible, earned score, or graded date flush in the top right.
   - **Bottom Edge Banner**: Due date text, feedback acknowledgment button, and submission checkbox are bonded directly to the bottom boundary (`px-3 py-1.5 border-t border-slate-100`).
-- **Elimination of Clock Icons**: All clock icons next to due dates and timeline headers have been replaced with clean calendar date typography or `Calendar` icons.
+- **Elimination of Clock Icons & Relative Due Dates**:
+  - Imminent deadlines use intuitive relative labels (**"Today, [time]"**, **"Tomorrow, [time]"**, **"Yesterday, [time]"**) rather than requiring students to mentally calculate calendar numbers.
+  - **Sleep-Safe Date Refresh**: Powered by the `useNow` hook that listens to document `visibilitychange` (waking the laptop from sleep) and window `focus`, ensuring dates never freeze or lag even if a machine sleeps for days.
+- **Unboxed "Submitted?" Checkbox**:
+  - Eliminated distracting yellow and grey pill boxes around "Submitted?". Replaced with a clean, unboxed text label and checkbox with smooth emerald highlight when checked.
+- **Grammatical Points Formatting**:
+  - Automatically handles singular vs. plural grammar via `formatPoints`: correctly displays **"1 pt"** (never "1 pts") and **"X pts"**.
 - **Score Entity Semantics**:
   - **No Individual Item Letter Grades**: Letter grades are reserved for overall course standings and suppressed on individual assignment items to reduce visual noise.
   - **Score vs. Graded Date Swap**:
@@ -177,33 +186,71 @@ Calendar events (school assemblies, exams, seminars, extracurricular meetings, a
   - Displayed prominently by default whenever unacknowledged teacher comments exist across active courses, allowing one-click filtering or acknowledgment.
 
 ### 6.3 Canvas To-Do: Unified Edge-Bonded Card Architecture & "Done?" Checkbox
-- **Unified Edge-Bonded Card Architecture**: Canvas To-Do cards (both in the dedicated To-Do view and the priority side drawer) now strictly mirror the exact layout, edge-bonding, and visual aesthetics of the main assignment cards:
-  - **Top Edge Banner**: Course title and emoji flush left, quiz/submitting tag, points possible badge, and external Canvas deep-link button flush right (`px-3 py-1.5 bg-slate-50/90 border-b border-slate-100`).
+- **Unified Edge-Bonded Card Architecture**: Canvas To-Do cards (both in the dedicated To-Do view and the priority side drawer) strictly mirror the exact layout, edge-bonding, flat desaturated stripe, and visual aesthetics of the main assignment cards:
+  - **Student Friendly Course Names**: Automatically resolves custom abbreviations (e.g. `PHYS`, `ENG`) and thematic emojis rather than raw Canvas context strings.
+  - **Top Edge Banner**: Natural-cased course title and emoji flush left, quiz/submitting tag, points possible badge (formatted as `1 pt` or `X pts`), and external Canvas deep-link button flush right (`px-3 py-1.5 bg-slate-50/90 border-b border-slate-100`).
   - **Middle Card Body**: Full assignment title with hover state, clean instruction preview stripped of boilerplate, and submission type indicator.
-  - **Bottom Edge Banner**: Due date with `Calendar` icon flush left, paired with the interactive **"Done?"** checkbox and loading spinner flush right (`px-3 py-1.5 bg-slate-50/50 border-t border-slate-100`).
+  - **Bottom Edge Banner**: Relative due date with `Calendar` icon flush left, paired with the interactive **"Done?"** checkbox and loading spinner flush right (`px-3 py-1.5 bg-slate-50/50 border-t border-slate-100`).
 - **Interactive "Done?" Checkbox**: Replaced ambiguous text buttons with an explicit **"Done?"** checkbox.
 - **One-Click Dismissal**: Checking the box immediately applies a strike-through visual state and invokes Canvas's dismiss API endpoint (`DELETE /api/v1/users/self/todo/items/:id`), removing the item from the user's active LMS queue.
 
-### 6.4 World Language Assignment Translation
+### 6.4 World Language Assignment & Module Translation
 - **Automatic Language Detection**:
   - Scans course names for world languages commonly taught in schools in both English and native course language spellings (Spanish, French, German, Chinese, Japanese, Italian, Latin, Russian, Arabic, Portuguese, Korean, Hebrew, Greek).
-- **Translation Button**: Displayed on assignment cards (`[ES ➔ EN] Translate`) and table rows.
-- **Translation Modal**:
-  - Dual-panel display comparing original assignment text and English translation.
-  - Automated translation using free MyMemory public translation API.
-  - Direct deep link to Google Translate with pre-populated source language and text.
+  - Detects language classes across assignments, To-Do items, zoom details, and module lists.
+- **3-State Dynamic Translation Button**:
+  - **State 1 (Default / Un-translated)**: Subtle indigo badge (`bg-indigo-50 text-indigo-700`) displaying `[ES ➔ EN] Translate`.
+  - **State 2 (Translating in Progress)**: Amber pulsing badge with animated spinner (`<Loader2 className="animate-spin" /> Translating...`).
+  - **State 3 (Ready / Cached)**: Distinctive bright emerald badge (`bg-emerald-600 text-white font-bold`) displaying `[ES ➔ EN] Translated ✓`.
+- **Persistent Dual-Layer Caching & Content Hashing**:
+  - Translations are stored in an in-memory map and persisted across browser sessions in `localStorage` keyed by `canvas_translation_v2_${itemId}`.
+  - Deterministic djb2 content hashing (`computeContentHash(title, description)`) detects LMS content modifications and invalidates stale cached translations automatically.
+  - Subsequent clicks open translated text instantaneously (0ms latency) without re-querying external APIs.
+- **Parallel Network Execution**:
+  - Title and instruction text are fetched concurrently via `Promise.all` rather than sequentially, cutting network round trips and latency in half.
+  - Graceful fallback with rate-limit warnings and 1-click external Google Translate integration.
+- **Canvas Module Translation Support**:
+  - Translation buttons are integrated directly into Canvas Module headers (`module-${id}`) and individual module items (`item-${id}` for assignments, pages, quizzes, files, discussions).
+  - Language students can translate unit names and lesson titles directly from the Modules tab.
+- **Zoom for Details Integration**:
+  - Dedicated translation trigger in the Zoom Modal header with side-by-side English translation display and single-click copy to clipboard.
+  - Replaced decorative sparkle icons with semantic language glyphs for a clean, non-AI-slop visual hierarchy.
 
 ### 6.5 Assignment Detail & Feedback Modal (Zoom Modal)
 - **Automatic Smart Tab Selection**: Opens directly to feedback if comments or submissions exist.
 - **Rubric Breakdown**: Full criterion points, descriptions, and ratings.
 - **Clean Due Date Header**: Clean formatted date strings without redundant clock icons.
+- **Proactive Related Modules & Resources Search (New)**:
+  - Added dedicated **"Related Resources"** tab in the Zoom Modal.
+  - Automatically correlates the active assignment with all modules in the course by direct assignment ID references, unit/chapter numerical matching (e.g. `Unit 3`, `Ch 4`, `Week 2`), and multi-term keyword heuristics.
+  - Displays matching lecture slides, syllabus sheets, study guides, and review quizzes with categorized badges (`Direct Module Link`, `Matches Unit 3`, `Keyword Match`).
+  - Provides direct in-app links and one-click external deep links (`html_url`) to jump directly to Canvas module items.
+  - Built-in live search bar allows searching across all files and items in the course on demand.
 
 ### 6.6 Assignments Table (List View) & Error Boundary
-- **Crash Isolation**: Wrapped in a dedicated `<ErrorBoundary>` with an in-place retry action.
+- **Resolution of "Illegal constructor"**:
+  - Root cause was unimported `Lock` in `utils/dashboard-helpers.ts`, which caused `getAssignmentStatus(assignment)` for locked-until assignments to fall back to the native Web Locks API (`window.Lock`), throwing `TypeError: Illegal constructor` when rendered as a JSX component `<status.icon />`.
+  - Added Lucide icon `Lock` to `utils/dashboard-helpers.ts` and automated regression tests verifying element constructibility.
+- **Self-Healing View Transitions**:
+  - `ErrorBoundary` instances are now independently keyed by view mode and course (`key="board-..."` and `key="table-..."`) and implement `componentDidUpdate` to auto-clear error state when switching views, preventing caught errors from persisting when toggling between card and list views.
 - **Sort and Filter Safeguards**: Protected against null submission scores and non-Set filter structures when toggling between Card and List views.
 
-### 6.7 Compact AI Analyzer
-- **Inline Compact State**: When collapsed, the AI Analyzer button renders in a neat, compact badge (`w-fit inline-flex max-w-full rounded-xl`) rather than stretching full-width.
+### 6.7 Tactical AI Academic Advisor & Problem-Solving Presets
+- **Inline Compact State**: When collapsed, the AI Analyzer button renders in a neat, compact badge (`w-fit inline-flex max-w-full rounded-xl`) displaying the active preset mode, "Analyze" action with Star icon, and an expand toggle.
+- **5 Tactical Problem-Solving Presets**:
+  1. **Link Modules & Study Guides to Upcoming Work & Exams**: Searches course modules to locate exact lecture slides, reading pages, study guides, and review materials matching upcoming assignments, quizzes, and exams.
+  2. **High-Impact Grade Rescue & Point Triage**: Analyzes point weights and current course grades to prioritize unsubmitted assignments with the highest mathematical impact on final letter grades.
+  3. **Teacher Feedback Action Items & Revision Plan**: Synthesizes teacher comments and submission remarks across recent assignments into actionable revision steps and resubmission opportunities.
+  4. **7-Day Tactical Study & Work Schedule**: Builds a day-by-day study roadmap grouping upcoming deadlines and allocating estimated time blocks for assignments and exam preparation.
+  5. **Executive Workload & Deadline Briefing**: Summarizes the 3 most critical upcoming deadlines, flags urgent missing work from the past 2 weeks, and alerts on low-grade courses.
+- **Deep Context Injection & Clickable Links**:
+  - The Gemini engine receives all visible assignments, current course grades, teacher submission feedback comments, and course module structures with items (types, titles, and Canvas URLs).
+  - Presets format recommended resources as direct, clickable HTML links (`<a href="URL" target="_blank" rel="noopener noreferrer">...</a>`) allowing students to jump straight into matching Canvas module slides and study guides.
+- **Interactive UI & Customization**:
+  - Quick-action preset chips with distinctive icons (`BookOpen`, `TrendingUp`, `MessageSquare`, `CalendarDays`, `Sparkles`).
+  - Active preset banner with "Reset to preset" action.
+  - Expandable drawer for custom prompt directives and model selection (Gemini 3.8 Flash, Gemini Flash Latest, Gemini 3.1 Flash Lite, Gemini 3.1 Pro).
+  - Formatted report view with left accent bar, active mode badge, and 1-click clipboard copy with visual confirmation.
 
 ---
 
@@ -239,26 +286,49 @@ Calendar events (school assemblies, exams, seminars, extracurricular meetings, a
 
 ## 9. Automated Testing, Verification Suite & Crash Prevention
 
-### 9.1 Multi-Tier Test Suite (`npm test`)
-A comprehensive automated integration test suite is implemented in `scripts/test-runner.ts` covering:
+### 9.1 Multi-Tier Test Suite (`npm test` & In-App Diagnostics)
+A comprehensive automated integration test suite is implemented in `scripts/test-runner.ts` covering 7 distinct suites (65 tests):
 1. **Server Health & Connectivity**: Validates that the Express proxy server is running and responds with HTTP 200 on `/api/health`.
-2. **Real Canvas API Verification via Server Secret**:
-   - Uses test credentials securely stored in server-side `.env` (`TEST_CANVAS_DOMAIN` and `TEST_CANVAS_TOKEN`), never bundled into client code.
+2. **Real Canvas API Verification via AI Studio Secrets**:
+   - Uses test credentials configured securely in **AI Studio Secrets** (`Settings > Secrets`) as server environment variables (`TEST_CANVAS_TOKEN`, `TEST_CANVAS_DOMAIN`).
+   - Zero secret files exist in the repository or filesystem, completely eliminating merge conflict prompts.
+   - Client bundle isolation: Vite strictly ignores non-`VITE_` server environment variables during production builds (`dist/assets/index-*.js`), ensuring secrets can never leak or ship to client browsers.
    - Verifies real Canvas user authentication (`/api/v1/users/self`), validating student identity and student ID.
    - Queries real enrolled courses and To-Do lists over Canvas LMS REST endpoints.
 3. **Domain Logic & Heuristic Calculations**:
    - World language detection regexes for English and native names (e.g., Spanish, French).
    - Grade tier color generation with discrete borders and high-contrast gaps.
    - Heuristic 0% vs. No Data classification for zero-graded courses.
-   - Canvas default syllabus boilerplate removal.
+   - Canvas default syllabus boilerplate removal and real content preservation.
+   - Singular "1 pt" vs plural "X pts" grammar formatting.
+   - Relative due date formatting ("Today, ...", "Tomorrow, ...").
+   - Web Locks API constructor collision regression testing (`window.Lock` vs Lucide `Lock`).
 4. **UI State Transition & Click Simulation**:
    - Simulates clicking "All" courses in the sidebar.
    - Simulates clicking "None" (toggling off all courses) and verifies safe fallback rendering without exceptions.
    - Simulates toggling on a single course from empty selection.
    - Simulates switching from multi-class view directly to single course view.
    - Simulates clicking the To-Do "Done?" checkbox and triggering dismissal handlers.
+5. **World Language Translation Caching & Hashing**:
+   - Validates language course detection badges (`ES ➔ EN`, `FR ➔ EN`).
+   - Verifies deterministic djb2 content hashing on assignment titles and instructions.
+   - Validates memory and localStorage caching, invalidating stale translations when instructions update.
+6. **Proactive Related Modules Search**:
+   - Tests tokenizer extraction of Unit, Chapter, and keyword patterns.
+   - Verifies scoring heuristics matching assignment titles against course module slide decks, reading pages, and review packets.
+7. **Tactical AI Problem-Solving Presets & Model Sanitization**:
+   - Verifies all 5 tactical presets (`modules-exams`, `grade-impact`, `teacher-feedback`, `study-plan-7day`, `workload-overview`).
+   - Verifies model sanitization defaulting legacy IDs to `gemini-3.8-flash`.
 
-### 9.2 Robust Crash Guards & Error Boundaries
+### 9.2 Running Tests Without AI Chat (In-App Diagnostics)
+- **Zero AI Chat Dependency**: Users can run the automated test suite directly in the browser without asking the AI assistant.
+- **In-App Runner in API Debugger**:
+  - Accessible via the **"Debug"** button in the sidebar (or login screen).
+  - Contains a dedicated **"Run Automated Test Suite (65 Tests)"** button.
+  - Calls `POST /api/tests/run` on the local Express server and renders a color-coded test dashboard grouped by suite, showing passes (`✓`), failures (`✗`), and assertion descriptions.
+- **Terminal Execution**: Can also be executed anytime via `npm test` from the terminal.
+
+### 9.3 Robust Crash Guards & Error Boundaries
 - **Defensive Array Spreading**: All `course.assignments` and `course.modules` references are guarded with `(c.assignments || [])` and `(c.modules || [])` to prevent `TypeError: undefined is not iterable` during rapid course filtering.
 - **View-Level Error Isolation**: `<ErrorBoundary>` components wrap `<Overview>`, `<AssignmentsBoard>`, `<AssignmentsTable>`, and `<CanvasToDo>`, ensuring that any transient data error displays an in-place recovery action rather than crashing the entire dashboard.
 

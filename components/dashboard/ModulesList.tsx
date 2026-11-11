@@ -12,10 +12,14 @@ import {
   Layers,
   Calendar,
   ArrowUpDown,
-  Bookmark
+  Bookmark,
+  Languages,
+  Loader2
 } from 'lucide-react';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { CourseCustomization } from '../../services/courseCustomization';
+import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslationInProgress } from '../../services/translation';
+import { TranslationModal } from './TranslationModal';
 
 interface ModulesListProps {
   modules: CanvasModule[];
@@ -145,6 +149,20 @@ export const ModulesList: React.FC<ModulesListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState<'course' | 'date'>('course');
   const todayBookmarkRef = useRef<HTMLDivElement | null>(null);
+  const [translatingItem, setTranslatingItem] = useState<{
+    itemId?: string | number;
+    assignmentTitle: string;
+    assignmentDescription?: string;
+    courseName: string;
+    languageMatch: WorldLanguageMatch;
+  } | null>(null);
+  const [, setTransVersion] = useState(0);
+
+  useEffect(() => {
+    const handler = () => setTransVersion(v => v + 1);
+    window.addEventListener('canvas:translation_changed', handler);
+    return () => window.removeEventListener('canvas:translation_changed', handler);
+  }, []);
 
   const toggleItem = (id: number) => {
     const next = new Set(expandedItems);
@@ -336,6 +354,8 @@ export const ModulesList: React.FC<ModulesListProps> = ({
   ) => {
     const isModuleExpanded = expandedModules.has(module.id);
     const dateInfo = module.dateInfo || resolveModuleDate(module, courseAssignmentsMap.get(module.course_id));
+    const courseName = context?.courseName || getCourseName(module.course_id);
+    const langMatch = detectWorldLanguage(courseName);
 
     return (
       <div 
@@ -362,6 +382,58 @@ export const ModulesList: React.FC<ModulesListProps> = ({
             <h4 className="font-semibold text-slate-800 text-sm truncate" title={module.name}>
               {module.name}
             </h4>
+
+            {langMatch.isLanguageCourse && (() => {
+              const modKey = `module-${module.id}`;
+              const isTranslated = isItemTranslated(modKey);
+              const isTranslating = isTranslationInProgress(modKey);
+              return (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTranslatingItem({
+                      itemId: modKey,
+                      assignmentTitle: module.name,
+                      assignmentDescription: '',
+                      courseName,
+                      languageMatch: langMatch
+                    });
+                  }}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer shrink-0 shadow-2xs ${
+                    isTranslating
+                      ? 'bg-amber-50 text-amber-800 border border-amber-300 animate-pulse'
+                      : isTranslated
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700'
+                        : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80'
+                  }`}
+                  title={
+                    isTranslating
+                      ? 'Translating module title in background...'
+                      : isTranslated
+                        ? `Module translated! Click to view English translation (${langMatch.languageName})`
+                        : `Translate ${langMatch.languageName} module title to English`
+                  }
+                >
+                  {isTranslating ? (
+                    <>
+                      <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                      <span>Translating...</span>
+                    </>
+                  ) : isTranslated ? (
+                    <>
+                      <Languages className="w-3 h-3 text-emerald-200" />
+                      <span>{langMatch.badgeText} ✓</span>
+                    </>
+                  ) : (
+                    <>
+                      <Languages className="w-3 h-3 text-indigo-600" />
+                      <span>{langMatch.badgeText}</span>
+                    </>
+                  )}
+                </button>
+              );
+            })()}
 
             {/* Meaningful date badge if detected */}
             {dateInfo.label && (
@@ -449,6 +521,59 @@ export const ModulesList: React.FC<ModulesListProps> = ({
                         </div>
                       )}
                     </div>
+
+                    {langMatch.isLanguageCourse && (() => {
+                      const itemKey = `item-${item.id}`;
+                      const isTranslated = isItemTranslated(itemKey);
+                      const isTranslating = isTranslationInProgress(itemKey);
+                      return (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const matchedAssign = (courseAssignmentsMap.get(module.course_id) || []).find(a => 
+                              (item.content_id && a.id === item.content_id) ||
+                              (a.name && item.title && a.name.trim().toLowerCase() === item.title.trim().toLowerCase())
+                            );
+                            setTranslatingItem({
+                              itemId: itemKey,
+                              assignmentTitle: item.title,
+                              assignmentDescription: matchedAssign?.description || '',
+                              courseName,
+                              languageMatch: langMatch
+                            });
+                          }}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer shrink-0 shadow-2xs ${
+                            isTranslating
+                              ? 'bg-amber-50 text-amber-800 border border-amber-300 animate-pulse'
+                              : isTranslated
+                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700'
+                                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80'
+                          }`}
+                          title={
+                            isTranslating
+                              ? 'Translating item in background...'
+                              : isTranslated
+                                ? `Item translated! Click to view English translation`
+                                : `Translate ${langMatch.languageName} item to English`
+                          }
+                        >
+                          {isTranslating ? (
+                            <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                          ) : isTranslated ? (
+                            <>
+                              <Languages className="w-3 h-3 text-emerald-200" />
+                              <span>{langMatch.badgeText} ✓</span>
+                            </>
+                          ) : (
+                            <>
+                              <Languages className="w-3 h-3 text-indigo-600" />
+                              <span>{langMatch.badgeText}</span>
+                            </>
+                          )}
+                        </button>
+                      );
+                    })()}
 
                     {showIds && (
                       <span className="text-[10px] font-mono text-slate-300 hover:text-slate-500 select-all shrink-0">
@@ -729,6 +854,19 @@ export const ModulesList: React.FC<ModulesListProps> = ({
             );
           })}
         </div>
+      )}
+
+      {/* World Language Translation Modal for Module & Items */}
+      {translatingItem && (
+        <TranslationModal
+          isOpen={true}
+          onClose={() => setTranslatingItem(null)}
+          itemId={translatingItem.itemId}
+          assignmentTitle={translatingItem.assignmentTitle}
+          assignmentDescription={translatingItem.assignmentDescription}
+          courseName={translatingItem.courseName}
+          languageMatch={translatingItem.languageMatch}
+        />
       )}
     </div>
   );

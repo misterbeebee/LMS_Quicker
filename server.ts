@@ -14,6 +14,17 @@ async function startServer() {
     res.json({ status: 'ok' });
   });
 
+  // Diagnostics & Automated Test Suite Runner endpoint
+  app.post('/api/tests/run', express.json(), async (req, res) => {
+    try {
+      const { runIntegrationTestSuite } = await import('./scripts/test-runner');
+      const results = await runIntegrationTestSuite(req.body);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to run test suite: ' + (err.message || String(err)) });
+    }
+  });
+
   // Lazy initialize GoogleGenAI client on server
   let geminiClient: GoogleGenAI | null = null;
   function getGeminiClient(): GoogleGenAI {
