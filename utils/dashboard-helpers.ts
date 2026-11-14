@@ -1,7 +1,7 @@
 
 
 import React from 'react';
-import { CanvasAssignment, CanvasSubmissionComment } from '../types';
+import { CanvasAssignment, CanvasCourse, CanvasSubmissionComment, CanvasAnnouncement } from '../types';
 import { CheckCircle, Clock, AlertCircle, Calendar, MessageSquare, Lock } from 'lucide-react';
 
 // Helper to strip HTML tags for clean text display
@@ -399,6 +399,61 @@ export const formatRelativeDueDate = (dateStr: string | null, now: Date = new Da
   return timeStr ? `${formatted}, ${timeStr}` : formatted;
 };
 
+/**
+ * Formats calendar event dates explicitly with weekday, month, day, and 4-digit year
+ * (plus time when non-all-day) for Agenda and List views.
+ */
+export const formatCalendarEventDate = (
+  input:
+    | string
+    | null
+    | undefined
+    | {
+        due_at?: string | null;
+        start_at?: string | null;
+        end_at?: string | null;
+        all_day_date?: string | null;
+      }
+): string => {
+  if (!input) return 'Date TBD';
+
+  let dateStr: string | null | undefined;
+  let isAllDay = false;
+
+  if (typeof input === 'string') {
+    dateStr = input;
+  } else {
+    if (input.all_day_date && !input.start_at) {
+      dateStr = `${input.all_day_date}T12:00:00`;
+      isAllDay = true;
+    } else {
+      dateStr = input.start_at || input.due_at || input.end_at;
+    }
+  }
+
+  if (!dateStr) return 'Date TBD';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Date TBD';
+
+  if (isAllDay) {
+    return d.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
+  const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0;
+  return d.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    ...(hasTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+  });
+};
+
 // Helper to format dates - for past-due homework, time of day doesn't need to be shown
 export const formatDate = (dateStr: string | null) => {
   if (!dateStr) return "No due date";
@@ -493,13 +548,71 @@ export const getRowMeta = (a: CanvasAssignment) => {
               return { style: "bg-yellow-100 hover:bg-yellow-200", reason: "Teacher abandoned assignment?" };
           }
 
-          return { style: "bg-red-200 hover:bg-red-300", reason: "Overdue: Not submitted" };
+          return { style: "bg-rose-50/70 text-slate-800 hover:bg-rose-100/70", reason: "Overdue: Not submitted" };
       }
-      return { style: "bg-red-100 hover:bg-red-200", reason: "To Do: Due in future" };
+      return { style: "bg-white hover:bg-slate-50", reason: "To Do: Due in future" };
   }
 
   return { style: "bg-white hover:bg-slate-50", reason: "No due date, not submitted" };
 };
+
+/**
+ * Heuristically extracts a student's clean first name from raw LMS name strings.
+ * Examples:
+ * - "LastName, FirstName MiddleInitial (Student)" -> "FirstName"
+ * - "Smith, John A. (Student)" -> "John"
+ * - "Doe, Jane" -> "Jane"
+ * - "Alex Rivera (Student)" -> "Alex"
+ * - "Sarah" -> "Sarah"
+ */
+export function extractStudentFirstName(rawName?: string | null): string {
+  if (!rawName || typeof rawName !== 'string') return '';
+  
+  // 1. Strip role tags like (Student), (Observer), (Faculty), [Student], etc.
+  let cleaned = rawName
+    .replace(/\s*\((student|observer|faculty|teacher|user|guardian)\)/gi, '')
+    .replace(/\s*\[(student|observer|faculty|teacher|user|guardian)\]/gi, '')
+    .trim();
+
+  if (!cleaned) return '';
+
+  // 2. Check for "LastName, FirstName Middle..." format
+  if (cleaned.includes(',')) {
+    const parts = cleaned.split(',');
+    if (parts.length >= 2) {
+      const afterComma = parts[1].trim();
+      const tokens = afterComma.split(/\s+/).filter(Boolean);
+      if (tokens.length > 0) {
+        // Return first token, stripping trailing dots if single initial
+        const candidate = tokens[0].replace(/[.,]/g, '').trim();
+        if (candidate.length > 1) {
+          return candidate.charAt(0).toUpperCase() + candidate.slice(1).toLowerCase();
+        }
+        // If first token is just a single letter initial, check if there's a second token
+        if (tokens.length > 1) {
+          const second = tokens[1].replace(/[.,]/g, '').trim();
+          if (second) {
+            return second.charAt(0).toUpperCase() + second.slice(1).toLowerCase();
+          }
+        }
+        if (candidate) {
+          return candidate.toUpperCase();
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: "FirstName Middle LastName" or "FirstName" format
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length > 0) {
+    const first = tokens[0].replace(/[.,]/g, '').trim();
+    if (first) {
+      return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+    }
+  }
+
+  return cleaned;
+}
 
 // Helper to determine the style for scores based on percentage with solid color interpolation
 export const getScoreStyle = (score: number, points: number): { className: string, style?: React.CSSProperties } => {
@@ -590,4 +703,146 @@ export const linkifyHtml = (html?: string): string => {
     }
     return linkifyText(token);
   }).join('');
+};
+
+export const sanitizeRichHtml = (html?: string): string => {
+  if (!html) return '';
+  let clean = html
+    .replace(/<(script|iframe|object|embed|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(script|iframe|object|embed)\b[^>]*\/?>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src)\s*=\s*(['"])\s*javascript:[^'"]*\2/gi, '$1="#"');
+  clean = linkifyHtml(clean);
+  return clean;
+};
+
+export const OBSOLETE_DAYS_THRESHOLD = 42; // 6 weeks
+
+export const isAssignmentObsolete = (
+  assignment: Pick<CanvasAssignment, 'due_at' | 'is_calendar_event' | 'submission' | 'manual_marked_submitted' | 'submission_types'>,
+  nowMs: number = Date.now()
+): boolean => {
+  if (!assignment || assignment.is_calendar_event || isAssignmentSubmitted(assignment as CanvasAssignment)) {
+    return false;
+  }
+  if (!assignment.due_at) return false;
+  const dueTime = new Date(assignment.due_at).getTime();
+  if (isNaN(dueTime)) return false;
+  const diffDays = (nowMs - dueTime) / (1000 * 3600 * 24);
+  return diffDays > OBSOLETE_DAYS_THRESHOLD;
+};
+
+export const isAnnouncementObsolete = (
+  ann: Pick<CanvasAnnouncement, 'posted_at' | 'created_at'>,
+  nowMs: number = Date.now()
+): boolean => {
+  const dateStr = ann.posted_at || ann.created_at;
+  if (!dateStr) return false;
+  const postedTime = new Date(dateStr).getTime();
+  if (isNaN(postedTime)) return false;
+  const diffDays = (nowMs - postedTime) / (1000 * 3600 * 24);
+  return diffDays > OBSOLETE_DAYS_THRESHOLD;
+};
+
+export const isPastCalendarEvent = (
+  ev: {
+    start_at?: string | null;
+    end_at?: string | null;
+    all_day_date?: string | null;
+    due_at?: string | null;
+  },
+  nowMs: number = Date.now()
+): boolean => {
+  const dateStr =
+    ev.end_at ||
+    ev.start_at ||
+    (ev.all_day_date ? `${ev.all_day_date}T23:59:59` : null) ||
+    ev.due_at ||
+    null;
+  if (!dateStr) return false;
+  const t = new Date(dateStr).getTime();
+  return !isNaN(t) && t < nowMs;
+};
+
+/**
+ * Determines whether a course belongs to an ended/past academic term.
+ * Checks explicit Canvas term.end_at, course.end_at, workflow_state === 'completed',
+ * then infers seasonal or year-range academic terms (e.g., "Spring 2025", "2024-2025", "24-25", "SY25").
+ */
+export const isCourseInPastTerm = (
+  course: CanvasCourse | null | undefined,
+  nowMs: number = Date.now()
+): boolean => {
+  if (!course) return false;
+
+  // 1. Explicit Canvas term end date
+  if (course.term?.end_at) {
+    const termEnd = new Date(course.term.end_at).getTime();
+    if (!isNaN(termEnd)) {
+      return termEnd < nowMs;
+    }
+  }
+
+  // 2. Explicit course end date
+  if (course.end_at) {
+    const courseEnd = new Date(course.end_at).getTime();
+    if (!isNaN(courseEnd)) {
+      return courseEnd < nowMs;
+    }
+  }
+
+  // 3. Explicit Canvas workflow_state concluded check
+  if ((course as any).workflow_state === 'completed') {
+    return true;
+  }
+
+  // 4. Heuristic based on term name (ignoring ongoing labels)
+  const termName = (course.term?.name || '').trim();
+  if (!termName || /default term|ongoing|permanent|continuous/i.test(termName)) {
+    return false;
+  }
+
+  const nowDate = new Date(nowMs);
+  const currentYear = nowDate.getFullYear();
+
+  // Year range like "2024-2025", "2023/24", "24-25", or "SY 24-25"
+  const rangeMatch = termName.match(/\b(?:SY|AY)?\s*(?:20)?(\d{2})\s*[-/]\s*(?:20)?(\d{2})\b/i);
+  if (rangeMatch) {
+    const startYear = 2000 + parseInt(rangeMatch[1], 10);
+    const endYear = 2000 + parseInt(rangeMatch[2], 10);
+    if (endYear >= startYear && endYear <= startYear + 2) {
+      const inferredEnd = new Date(endYear, 6, 1).getTime(); // July 1 of ending year
+      return inferredEnd < nowMs;
+    }
+  }
+
+  // Prefixed school/fiscal year like "SY25", "SY 2025", "FY24"
+  const schoolYearMatch = termName.match(/\b(?:SY|AY|FY)\s*(?:20)?(\d{2})\b/i);
+  if (schoolYearMatch) {
+    const endYear = 2000 + parseInt(schoolYearMatch[1], 10);
+    return new Date(endYear, 6, 1).getTime() < nowMs;
+  }
+
+  // Season/Semester/Quarter + 4-digit year
+  const yearMatch = termName.match(/\b(20\d{2})\b/);
+  if (yearMatch) {
+    const yr = parseInt(yearMatch[1], 10);
+    if (/winter/i.test(termName)) {
+      return new Date(yr, 3, 1).getTime() < nowMs; // Ended April 1
+    }
+    if (/spring/i.test(termName)) {
+      return new Date(yr, 6, 1).getTime() < nowMs; // Ended July 1
+    }
+    if (/summer/i.test(termName)) {
+      return new Date(yr, 8, 1).getTime() < nowMs; // Ended Sept 1
+    }
+    if (/fall|autumn/i.test(termName)) {
+      return new Date(yr + 1, 0, 1).getTime() < nowMs; // Ended Jan 1 next year
+    }
+    if (yr < currentYear) {
+      return true;
+    }
+  }
+
+  return false;
 };

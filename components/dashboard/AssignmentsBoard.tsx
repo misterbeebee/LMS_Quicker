@@ -1,14 +1,14 @@
 
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { CanvasAssignment, CanvasTodoItem, CourseData } from '../../types';
+import { CanvasAssignment, CanvasTodoItem, CanvasAnnouncement, CourseData } from '../../types';
 import { 
   Calendar, AlertCircle, ArrowRight, AlertTriangle, CheckCircle2, 
   Lock, FileCheck, Archive, ArchiveRestore, HelpCircle, MessageSquare, 
   BookOpen, MapPin, Maximize2, Check, FileText, Settings, Languages, Globe,
   ChevronDown, ChevronRight, Megaphone, Loader2, ExternalLink
 } from 'lucide-react';
-import { getAssignmentStatus, stripHtml, isAssignmentSubmitted, getScoreStyle, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate } from '../../utils/dashboard-helpers';
+import { getAssignmentStatus, stripHtml, isAssignmentSubmitted, getScoreStyle, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate, formatCalendarEventDate, isPastCalendarEvent } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentZoomModal } from './AssignmentZoomModal';
 import { TranslationModal } from './TranslationModal';
@@ -16,6 +16,8 @@ import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslatio
 import { CourseCustomization } from '../../services/courseCustomization';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { useNow } from '../../utils/useRelativeTime';
+import { extractAssignmentFromTodo, getCalendarEventWebUrl } from '../../utils/canvasUrls';
+import { AnnouncementsWidget } from './AnnouncementsWidget';
 
 interface AssignmentsBoardProps {
   assignments: CanvasAssignment[];
@@ -29,6 +31,7 @@ interface AssignmentsBoardProps {
   showArchived?: boolean;
   showSubmitted?: boolean;
   showObsolete?: boolean;
+  showPastEvents?: boolean;
   showIds?: boolean;
   canvasUrl?: string;
   apiKey?: string;
@@ -43,6 +46,8 @@ interface AssignmentsBoardProps {
   onOpenGradeSettings?: () => void;
   todoItems?: CanvasTodoItem[];
   onMarkTodoDone?: (item: CanvasTodoItem) => Promise<void>;
+  announcements?: CanvasAnnouncement[];
+  onDismissAnnouncement?: (announcement: CanvasAnnouncement) => Promise<void>;
   courses?: CourseData[];
 }
 
@@ -58,6 +63,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
   showArchived = false,
   showSubmitted = false,
   showObsolete = false,
+  showPastEvents = false,
   showIds = false,
   canvasUrl = '',
   apiKey = '',
@@ -72,6 +78,8 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
   onOpenGradeSettings,
   todoItems = [],
   onMarkTodoDone,
+  announcements = [],
+  onDismissAnnouncement,
   courses = []
 }) => {
   const now = useNow();
@@ -162,11 +170,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       // Item Type filter: All / Assignments Only / Events Only
       if (itemTypeFilter === 'assignments' && a.is_calendar_event) return;
       if (itemTypeFilter === 'events' && !a.is_calendar_event) return;
-
-      // Feedback filter: if active, show only items with unacknowledged feedback
-      if (activeFilterFeedback && !hasUnacknowledgedFeedback(a, acknowledgedFeedbackIds || new Set())) {
-        return;
-      }
+      if (!showPastEvents && a.is_calendar_event && isPastCalendarEvent(a, now.getTime())) return;
 
       // 1. Archived filter: hide unless showArchived is true
       const isArchived = archivedAssignmentIds?.has(a.id);
@@ -177,8 +181,8 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       // Use consolidated submission logic
       const isSubmitted = isAssignmentSubmitted(a);
 
-      // 2. Submitted filter: hide unless showSubmitted is true (bypass when filtering specifically for feedback)
-      if (!activeFilterFeedback && isSubmitted && !showSubmitted) {
+      // 2. Submitted filter: hide unless showSubmitted is true
+      if (isSubmitted && !showSubmitted) {
         return;
       }
 
@@ -207,8 +211,15 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
 
       if (due < now) {
          if (a.is_calendar_event) {
-           // Past calendar events are completed sessions, not missing homework
-           buckets.completed.push(a);
+           // Keep calendar events occurring today or still active in "Up Next" today
+           const eventEnd = (a as any).end_at ? new Date((a as any).end_at) : null;
+           const isToday = due.toDateString() === now.toDateString();
+           if ((eventEnd && eventEnd > now) || isToday) {
+             buckets.today.push(a);
+           } else {
+             // Past calendar events from previous days are completed sessions
+             buckets.completed.push(a);
+           }
          } else {
            buckets.overdue.push(a);
          }
@@ -231,8 +242,8 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       }
     });
 
-    // If limitCompletedToRecent is true, filter completed items to only show those from the last 7 days (bypass when filtering specifically for feedback)
-    if (limitCompletedToRecent && !activeFilterFeedback) {
+    // If limitCompletedToRecent is true, filter completed items to only show those from the last 7 days
+    if (limitCompletedToRecent) {
         const oneWeekAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
         const fourteenDaysAgo = Date.now() - (14 * 24 * 60 * 60 * 1000); // Tighter Exception cap
 
@@ -294,7 +305,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     buckets.later.sort(dateSort);
 
     return buckets;
-  }, [assignments, limitCompletedToRecent, archivedAssignmentIds, showArchived, showSubmitted, showObsolete, activeFilterFeedback, acknowledgedFeedbackIds, itemTypeFilter]);
+  }, [assignments, limitCompletedToRecent, archivedAssignmentIds, showArchived, showSubmitted, showObsolete, showPastEvents, activeFilterFeedback, acknowledgedFeedbackIds, itemTypeFilter]);
 
   // Fix: Cast 'arr' to CanvasAssignment[] to access .length safely
   const isEmpty = Object.values(grouped).every((arr) => (arr as CanvasAssignment[]).length === 0);
@@ -371,6 +382,9 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     const courseName = getCourseName(a.course_id);
     const customCourse = courseCustomizations?.[a.course_id];
     const langMatch = detectWorldLanguage(courseName);
+    const safeUrl = (a.is_calendar_event
+      ? getCalendarEventWebUrl(a, canvasUrl)
+      : (a.html_url && a.html_url !== '#' ? a.html_url : '')) || '';
 
     return (
       <div 
@@ -551,9 +565,9 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
         {/* Card Body */}
         <div className="p-3 flex-1 min-w-0 bg-white">
           <h4 className="font-semibold text-slate-800 group-hover:text-blue-600 transition text-sm leading-snug line-clamp-2" title={a.name}>
-            {a.html_url ? (
+            {safeUrl ? (
               <a 
-                href={a.html_url} 
+                href={safeUrl} 
                 target="_blank" 
                 rel="noreferrer" 
                 onClick={(e) => e.stopPropagation()} 
@@ -587,9 +601,11 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             ) : null)}
             
             <span className={`font-medium truncate ${finalVariant === 'red' ? 'font-semibold text-rose-700' : ''}`}>
-              {variant === 'green' ? completedDateLabel : (a.due_at ? (
-                formatRelativeDueDate(a.due_at, now)
-              ) : 'No Due Date')}
+              {a.is_calendar_event
+                ? formatCalendarEventDate(a)
+                : variant === 'green'
+                  ? completedDateLabel
+                  : (a.due_at ? formatRelativeDueDate(a.due_at, now) : 'No Due Date')}
             </span>
 
             {hasUnack && (
@@ -640,9 +656,9 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
               </label>
             )}
 
-            {a.html_url && (
+            {safeUrl && (
               <a 
-                href={a.html_url} 
+                href={safeUrl} 
                 target="_blank" 
                 rel="noreferrer" 
                 onClick={(e) => e.stopPropagation()}
@@ -658,21 +674,9 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     );
   };
 
-  if (isEmpty) {
-    return (
-      <div className="flex flex-col items-center justify-center h-96 bg-white rounded-xl border border-slate-200 border-dashed">
-         <div className="bg-green-50 p-4 rounded-full mb-4">
-            <CheckCircle2 className="w-12 h-12 text-green-500" />
-         </div>
-         <h3 className="text-lg font-semibold text-slate-800">No assignments found</h3>
-         <p className="text-slate-500">Adjust your filters or check back later.</p>
-      </div>
-    );
-  }
-
   const totalEventsCount = useMemo(() => {
-    return assignments.filter(a => !!a.is_calendar_event).length;
-  }, [assignments]);
+    return assignments.filter(a => !!a.is_calendar_event && (showPastEvents || !isPastCalendarEvent(a))).length;
+  }, [assignments, showPastEvents]);
 
   const totalAssignmentsCount = useMemo(() => {
     return assignments.filter(a => !a.is_calendar_event).length;
@@ -685,6 +689,18 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
   const completedCount = useMemo(() => {
     return grouped.completed.length;
   }, [grouped]);
+
+  if (isEmpty && !activeFilterFeedback && (!todoItems || todoItems.length === 0) && (!announcements || announcements.length === 0)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96 bg-white rounded-xl border border-slate-200 border-dashed">
+         <div className="bg-green-50 p-4 rounded-full mb-4">
+            <CheckCircle2 className="w-12 h-12 text-green-500" />
+         </div>
+         <h3 className="text-lg font-semibold text-slate-800">No assignments found</h3>
+         <p className="text-slate-500">Adjust your filters or check back later.</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -731,35 +747,6 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
 
         {/* Secondary Filter Controls */}
         <div className="flex items-center flex-wrap gap-2">
-          {/* Segmented Filter: Only show if there are actual calendar events to toggle between */}
-          {totalEventsCount > 0 && (
-            <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200/60 shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setItemTypeFilter('assignments')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                  itemTypeFilter === 'assignments' 
-                    ? 'bg-white text-slate-900 shadow-2xs font-bold' 
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Show coursework assignments only"
-              >
-                Assignments Only ({totalAssignmentsCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setItemTypeFilter('all')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                  itemTypeFilter === 'all' 
-                    ? 'bg-white text-slate-900 shadow-2xs font-bold' 
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Include Canvas calendar events (lectures, exams, reminders) alongside assignments"
-              >
-                Include Calendar Events ({assignments.length})
-              </button>
-            </div>
-          )}
 
           <button
             type="button"
@@ -784,31 +771,10 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
         </div>
       </div>
 
-      {/* Persistent Default Feedback Notice Banner if unacknowledged feedback exists */}
-      {!activeFilterFeedback && unackTotalCount > 0 && (
-        <div className="bg-gradient-to-r from-blue-50/90 to-indigo-50/80 border border-blue-200/90 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 text-xs text-blue-900 shadow-2xs mb-4 animate-fadeIn">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-blue-600 text-white rounded-lg shadow-2xs">
-              <MessageSquare className="w-3.5 h-3.5" />
-            </div>
-            <div>
-              <span className="font-bold text-slate-900">Instructor Feedback Available:</span>
-              <span className="ml-1.5 text-slate-600">You have {unackTotalCount} unacknowledged instructor {unackTotalCount === 1 ? 'comment' : 'comments'}/rubric notes to review.</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => toggleFeedbackFilter()}
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold text-xs transition cursor-pointer shrink-0 shadow-2xs"
-          >
-            Review Feedback ({unackTotalCount})
-          </button>
-        </div>
-      )}
 
-      {/* FEEDBACK FILTER OVERRIDE VIEW */}
-      {activeFilterFeedback ? (
-        <div className="space-y-4 animate-fadeIn">
+      {/* FEEDBACK REVIEW PANEL (Displayed above assignments so users can scroll straight past to assignments) */}
+      {activeFilterFeedback && (
+        <div className="space-y-4 mb-6 pb-6 border-b border-slate-200 animate-fadeIn">
           <div className="bg-blue-50/70 border border-blue-200/80 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-blue-600 text-white shadow-xs">
@@ -818,65 +784,65 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                 <h3 className="text-sm font-bold text-slate-800">
                   Instructor Feedback to Review ({feedbackAssignments.length})
                 </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Click any card to read teacher comments and rubric criteria, or check the box to acknowledge.
-                </p>
               </div>
             </div>
-            {onAcknowledgeAllComments && feedbackAssignments.length > 0 && (
-              confirmingBoardAckAll ? (
-                <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-300 shadow-2xs animate-fadeIn">
-                  <span className="text-xs font-semibold text-amber-900">Acknowledge all feedback?</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const allCommentIds: (string | number)[] = [];
-                      feedbackAssignments.forEach(a => {
-                        getAssignmentFeedbackComments(a).forEach(c => {
-                          if (!acknowledgedFeedbackIds?.has(c.id) && !acknowledgedFeedbackIds?.has(String(c.id))) {
-                            allCommentIds.push(c.id);
-                          }
+            <div className="flex items-center gap-2 flex-wrap">
+              {onAcknowledgeAllComments && feedbackAssignments.length > 0 && (
+                confirmingBoardAckAll ? (
+                  <div className="flex items-center gap-1.5 bg-amber-50 p-1.5 rounded-lg border border-amber-300 shadow-2xs animate-fadeIn">
+                    <span className="text-xs font-semibold text-amber-900">Acknowledge all feedback?</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allCommentIds: (string | number)[] = [];
+                        feedbackAssignments.forEach(a => {
+                          getAssignmentFeedbackComments(a).forEach(c => {
+                            if (!acknowledgedFeedbackIds?.has(c.id) && !acknowledgedFeedbackIds?.has(String(c.id))) {
+                              allCommentIds.push(c.id);
+                            }
+                          });
                         });
-                      });
-                      onAcknowledgeAllComments(allCommentIds);
-                      setConfirmingBoardAckAll(false);
-                    }}
-                    className="px-2.5 py-1 text-xs font-bold rounded bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition cursor-pointer"
-                  >
-                    Confirm
-                  </button>
+                        onAcknowledgeAllComments(allCommentIds);
+                        setConfirmingBoardAckAll(false);
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold rounded bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition cursor-pointer"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingBoardAckAll(false)}
+                      className="px-2 py-1 text-xs font-medium rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => setConfirmingBoardAckAll(false)}
-                    className="px-2 py-1 text-xs font-medium rounded text-slate-600 hover:text-slate-900 transition cursor-pointer"
+                    onClick={() => setConfirmingBoardAckAll(true)}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-blue-300 text-blue-700 hover:bg-blue-100/60 shadow-2xs transition cursor-pointer flex items-center gap-1.5"
                   >
-                    Cancel
+                    <Check className="w-3.5 h-3.5" />
+                    Acknowledge All Feedback
                   </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmingBoardAckAll(true)}
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-blue-300 text-blue-700 hover:bg-blue-100/60 shadow-2xs transition cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  Acknowledge All Feedback
-                </button>
-              )
-            )}
+                )
+              )}
+              <button
+                type="button"
+                onClick={toggleFeedbackFilter}
+                className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
           {feedbackAssignments.length === 0 ? (
-            <div className="bg-white rounded-xl border border-slate-200 p-10 text-center">
-              <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
-              <h4 className="font-bold text-slate-800 text-base">All Caught Up!</h4>
-              <p className="text-xs text-slate-500 mt-1 mb-4">No unreviewed instructor feedback at this time.</p>
-              <button
-                onClick={toggleFeedbackFilter}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer"
-              >
-                Return to Due Date Board
-              </button>
+            <div className="bg-white rounded-xl border border-slate-200 p-6 text-center">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-1.5" />
+              <h4 className="font-bold text-slate-800 text-sm">All Caught Up!</h4>
+              <p className="text-xs text-slate-500 mt-1">No unreviewed instructor feedback at this time.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -884,7 +850,9 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             </div>
           )}
         </div>
-      ) : workflowSection === 'completed' ? (
+      )}
+
+      {workflowSection === 'completed' ? (
         /* DEDICATED COMPLETED & GRADED WORKSPACE */
         <div className="space-y-4 animate-fadeIn">
           <div className="flex items-center justify-between bg-slate-50/80 px-4 py-3 rounded-xl border border-slate-200/90 gap-3 flex-wrap">
@@ -896,9 +864,6 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                 <h3 className="font-bold text-xs text-slate-800">
                   Completed & Graded Coursework ({grouped.completed.length})
                 </h3>
-                <p className="text-[11px] text-slate-500">
-                  Review submitted deliverables, teacher comments, rubrics, and grade evaluations
-                </p>
               </div>
             </div>
 
@@ -924,6 +889,15 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       ) : (
         /* UPCOMING & ACTIVE WORKSPACE */
         <div className="space-y-5 animate-fadeIn">
+          {/* Collapsible Canvas Announcements Widget above Canvas To-Do */}
+          <AnnouncementsWidget
+            announcements={announcements}
+            onDismissAnnouncement={onDismissAnnouncement}
+            getCourseName={getCourseName}
+            courseCustomizations={courseCustomizations}
+            showIds={showIds}
+          />
+
           {/* Integrated Canvas Priority To-Do Section */}
           {todoItems && todoItems.length > 0 && (
             <div className="bg-gradient-to-r from-blue-50/60 via-indigo-50/40 to-slate-50/60 border border-blue-200/80 rounded-2xl p-4 shadow-2xs">
@@ -939,7 +913,6 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                         {todoItems.length} {todoItems.length === 1 ? 'task' : 'tasks'}
                       </span>
                     </div>
-                    <p className="text-[11px] text-slate-500">Official Canvas planner items prioritized for your immediate attention</p>
                   </div>
                 </div>
 
@@ -957,22 +930,34 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-fadeIn">
                   {todoItems.map((item, idx) => {
                     const uniqueKey = item.ignore || item.html_url || String(idx);
-                    const title = item.assignment?.name || item.quiz?.title || 'Canvas ToDo';
-                    const courseId = item.course_id || item.assignment?.course_id || item.context_id;
+                    const extracted = extractAssignmentFromTodo(item, courses || [], canvasUrl);
+                    const targetAssignment: CanvasAssignment | null = extracted?.assignment || item.assignment || null;
+
+                    const title = item.assignment?.name || item.quiz?.title || (item as any).title || extracted?.assignment?.name || 'Canvas To-Do Item';
+                    const courseId = extracted?.courseId || item.course_id || item.assignment?.course_id || item.context_id;
                     const customCourse = courseId ? courseCustomizations?.[courseId] : undefined;
-                    const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
-                    const courseName = courseId ? getCourseName(courseId) : (customCourse?.abbreviation || rawCourseName);
+                    const rawCourseName = extracted?.courseName || (item.context_name ? pruneCourseTitle(item.context_name) : 'Course');
+                    const courseName = (courseId && getCourseName) ? getCourseName(courseId) : rawCourseName;
                     const emoji = customCourse?.emoji;
-                    const dueAt = item.assignment?.due_at || null;
-                    const points = item.assignment?.points_possible;
+                    const dueAt = targetAssignment?.due_at || item.assignment?.due_at || null;
+                    const points = targetAssignment?.points_possible ?? item.assignment?.points_possible;
                     const isProcessing = processingTodoKey === uniqueKey;
+                    const canvasLink = targetAssignment?.html_url || item.assignment?.html_url || item.html_url;
 
                     return (
                       <div
                         key={uniqueKey}
-                        className="relative rounded-xl border border-slate-200/90 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
+                        onClick={() => {
+                          if (targetAssignment) {
+                            setZoomedAssignment(targetAssignment);
+                          }
+                        }}
+                        className={`relative rounded-xl border border-slate-200/90 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden group ${
+                          targetAssignment ? 'cursor-pointer' : ''
+                        }`}
+                        title={targetAssignment ? "Click card to zoom for details" : undefined}
                       >
-                        {/* Flat left accent stripe (replaces border-l-4 to eliminate C-shape curve and tip hooks) */}
+                        {/* Flat left accent stripe */}
                         <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-400/80 pointer-events-none z-10" />
 
                         {/* Top bonded header */}
@@ -981,16 +966,17 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                             {emoji ? `${emoji} ` : ''}{courseName}
                           </span>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {points !== undefined && (
+                            {points !== undefined && points !== null && (
                               <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 rounded-full">
                                 {formatPoints(points)}
                               </span>
                             )}
-                            {item.html_url && (
+                            {canvasLink && (
                               <a
-                                href={item.html_url}
+                                href={canvasLink}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 className="text-slate-300 hover:text-blue-600 p-0.5 rounded transition"
                                 title="Open in Canvas"
                               >
@@ -1003,7 +989,18 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                         {/* Body */}
                         <div className="p-3 flex-1 min-w-0 bg-white">
                           <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug group-hover:text-blue-600 transition" title={title}>
-                            {title}
+                            {canvasLink ? (
+                              <a
+                                href={canvasLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="hover:underline text-slate-900 hover:text-blue-600 transition"
+                                title="Open in Canvas"
+                              >
+                                {title}
+                              </a>
+                            ) : title}
                           </h4>
                         </div>
 
@@ -1016,30 +1013,47 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
                             </span>
                           </div>
 
-                          {onMarkTodoDone && (
-                            <label
-                              onClick={(e) => e.stopPropagation()}
-                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
-                                isProcessing 
-                                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
-                                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
-                              }`}
-                              title="Mark as done and dismiss from Canvas To-Do"
-                            >
-                              {isProcessing ? (
-                                <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
-                              ) : (
-                                <input
-                                  type="checkbox"
-                                  checked={false}
-                                  disabled={isProcessing}
-                                  onChange={(e) => handleTodoDone(item, e as any)}
-                                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
-                                />
-                              )}
-                              <span>Done?</span>
-                            </label>
-                          )}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {targetAssignment && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setZoomedAssignment(targetAssignment);
+                                }}
+                                className="text-[10px] font-semibold text-slate-700 hover:text-blue-700 bg-white hover:bg-blue-50 px-2 py-0.5 rounded border border-slate-200 hover:border-blue-300 transition inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                                title="Zoom for Details (instructions, rubrics, feedback, module resources)"
+                              >
+                                <Maximize2 className="w-2.5 h-2.5 text-slate-500" />
+                                <span>Zoom</span>
+                              </button>
+                            )}
+
+                            {onMarkTodoDone && (
+                              <label
+                                onClick={(e) => e.stopPropagation()}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
+                                  isProcessing 
+                                    ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                                    : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
+                                }`}
+                                title="Mark as done and dismiss from Canvas To-Do"
+                              >
+                                {isProcessing ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={false}
+                                    disabled={isProcessing}
+                                    onChange={(e) => handleTodoDone(item, e as any)}
+                                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
+                                  />
+                                )}
+                                <span>Done?</span>
+                              </label>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -1111,20 +1125,22 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       )}
 
       {/* Centered Zoom Modal */}
-      <AssignmentZoomModal 
-        assignment={zoomedAssignment}
-        courseName={zoomedAssignment ? getCourseName(zoomedAssignment.course_id) : ''}
-        canvasUrl={canvasUrl}
-        apiKey={apiKey}
-        useProxy={useProxy}
-        onClose={() => setZoomedAssignment(null)}
-        acknowledgedFeedbackIds={acknowledgedFeedbackIds}
-        onToggleAcknowledgeComment={onToggleAcknowledgeComment}
-        onAcknowledgeAllComments={onAcknowledgeAllComments}
-        gradeConfig={gradeConfig}
-        onOpenGradeSettings={onOpenGradeSettings}
-        courseModules={zoomedAssignment && courses ? (courses.find(c => c.course.id === zoomedAssignment.course_id)?.modules || []) : []}
-      />
+      {zoomedAssignment && (
+        <AssignmentZoomModal 
+          assignment={zoomedAssignment}
+          courseName={getCourseName(zoomedAssignment.course_id)}
+          canvasUrl={canvasUrl}
+          apiKey={apiKey}
+          useProxy={useProxy}
+          onClose={() => setZoomedAssignment(null)}
+          acknowledgedFeedbackIds={acknowledgedFeedbackIds}
+          onToggleAcknowledgeComment={onToggleAcknowledgeComment}
+          onAcknowledgeAllComments={onAcknowledgeAllComments}
+          gradeConfig={gradeConfig}
+          onOpenGradeSettings={onOpenGradeSettings}
+          courseModules={courses ? (courses.find(c => c.course.id === zoomedAssignment.course_id)?.modules || []) : []}
+        />
+      )}
 
       {/* World Language Translation Modal */}
       {translatingItem && (

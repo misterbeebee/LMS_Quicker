@@ -28,7 +28,8 @@ import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { TranslationModal } from './TranslationModal';
 import { detectWorldLanguage, isItemTranslated, isTranslationInProgress } from '../../services/translation';
-import { findRelatedModuleContent, RelatedModuleContentMatch } from '../../utils/moduleSearch';
+import { findRelatedModuleContent, findContainingModule, RelatedModuleContentMatch } from '../../utils/moduleSearch';
+import { getHumanModuleItemWebUrl, getCalendarEventWebUrl } from '../../utils/canvasUrls';
 
 interface AssignmentZoomModalProps {
   assignment: CanvasAssignment | null;
@@ -59,14 +60,12 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   onOpenGradeSettings,
   courseModules = []
 }) => {
-  if (!assignment) return null;
-
   const [detail, setDetail] = useState<CanvasAssignmentDetail | null>(() => {
-    return getCachedAssignmentDetail(assignment.course_id, assignment.id) || null;
+    return assignment ? (getCachedAssignmentDetail(assignment.course_id, assignment.id, canvasUrl, apiKey) || null) : null;
   });
-  const [loading, setLoading] = useState<boolean>(!detail);
-  const isInitiallySubmitted = isAssignmentSubmitted(assignment);
-  const initialComments = getAssignmentFeedbackComments(assignment);
+  const [loading, setLoading] = useState<boolean>(() => !detail && !!assignment);
+  const isInitiallySubmitted = assignment ? isAssignmentSubmitted(assignment) : false;
+  const initialComments = assignment ? getAssignmentFeedbackComments(assignment) : [];
   const [confirmingAcknowledgeAll, setConfirmingAcknowledgeAll] = useState(false);
   const [showTranslationModal, setShowTranslationModal] = useState(false);
   const [, setTransVersion] = useState(0);
@@ -87,6 +86,11 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
     return findRelatedModuleContent(assignment, courseModules);
   }, [assignment, courseModules]);
 
+  const containingModule = React.useMemo(() => {
+    if (!assignment || !courseModules || courseModules.length === 0) return null;
+    return findContainingModule(assignment, courseModules);
+  }, [assignment, courseModules]);
+
   const searchedModuleItems = React.useMemo(() => {
     if (!moduleSearchQuery.trim() || !courseModules) return [];
     const q = moduleSearchQuery.toLowerCase();
@@ -105,12 +109,14 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   }, [moduleSearchQuery, courseModules]);
 
   useEffect(() => {
+    if (!assignment) return;
     const isSub = isAssignmentSubmitted(assignment);
     const hasFb = getAssignmentFeedbackComments(assignment).length > 0;
     setActiveTab((hasFb || isSub) ? 'feedback' : 'instructions');
-  }, [assignment.id]);
+  }, [assignment?.id]);
 
   const loadDetails = async (forceRefresh: boolean = false) => {
+    if (!assignment) return;
     setLoading(true);
     try {
       const data = await fetchAssignmentDetails(
@@ -130,8 +136,10 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
   };
 
   useEffect(() => {
-    loadDetails();
-  }, [assignment.id, assignment.course_id, canvasUrl, apiKey, useProxy]);
+    if (assignment) {
+      loadDetails();
+    }
+  }, [assignment?.id, assignment?.course_id, canvasUrl, apiKey, useProxy]);
 
   // Handle ESC key to close
   useEffect(() => {
@@ -143,6 +151,8 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  if (!assignment) return null;
 
   // Clean and sanitize HTML for safe display
   const sanitizeHtml = (html?: string) => {
@@ -218,11 +228,11 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden text-left"
+        className="bg-white rounded-2xl shadow-2xl border border-slate-200/80 w-full max-w-3xl max-h-[90dvh] flex flex-col overflow-hidden text-left"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header bar */}
-        <div className="flex items-start justify-between gap-4 p-5 pb-3 border-b border-slate-100 bg-slate-50/60">
+        <div className="flex items-start justify-between gap-4 p-4 sm:p-5 pb-3 border-b border-slate-100 bg-slate-50/60 shrink-0">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded uppercase tracking-wider truncate max-w-[260px]">
@@ -310,7 +320,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
         </div>
 
         {/* Metadata Strip */}
-        <div className="py-2.5 px-5 flex items-center flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-600 border-b border-slate-100 bg-slate-50/30">
+        <div className="py-2 px-4 sm:px-5 flex items-center flex-wrap gap-x-4 sm:gap-x-5 gap-y-1.5 text-xs text-slate-600 border-b border-slate-100 bg-slate-50/30 shrink-0">
           <div className="flex items-center gap-1.5 font-medium">
             <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>
@@ -418,7 +428,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center gap-3 px-5 border-b border-slate-200 pt-2 bg-white">
+        <div className="flex items-center gap-3 px-4 sm:px-5 border-b border-slate-200 pt-2 bg-white shrink-0 overflow-x-auto custom-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab('instructions')}
@@ -497,7 +507,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
         </div>
 
         {/* Scrollable Content Body */}
-        <div className="flex-1 overflow-y-auto p-5 md:p-6 text-sm text-slate-700 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-6 pb-8 text-sm text-slate-700 space-y-4 custom-scrollbar">
           {loading && !detail ? (
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
               <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
@@ -741,27 +751,43 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
               {/* Related Modules & Resources Tab */}
               {currentTab === 'modules' && (
                 <div className="space-y-4">
-                  {/* Proactive search header */}
-                  <div className="p-3.5 bg-blue-50/70 border border-blue-200/80 rounded-xl flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 bg-blue-600 text-white rounded-lg shadow-2xs">
-                        <BookOpen className="w-4 h-4" />
+                  {/* Containing module information or clean course materials header */}
+                  {containingModule ? (
+                    <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="p-2 bg-blue-600 text-white rounded-lg shadow-2xs shrink-0">
+                          <BookOpen className="w-4 h-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">
+                            Containing Module
+                          </div>
+                          <h4 className="font-bold text-xs text-slate-800 truncate" title={containingModule.name}>
+                            {containingModule.name}
+                          </h4>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-xs text-slate-800">
-                          Related Course Modules & Learning Resources
-                        </h4>
-                        <p className="text-[11px] text-slate-500">
-                          Proactively matched lesson pages, readings, files, and practice items from <span className="font-semibold text-slate-700">{courseName}</span>
-                        </p>
+                      <span className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 px-2.5 py-0.5 rounded-full shadow-2xs shrink-0">
+                        {(containingModule.items || []).filter(i => i.type !== 'SubHeader').length} items in module
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 bg-slate-700 text-white rounded-lg shadow-2xs">
+                          <BookOpen className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-xs text-slate-800">
+                            Course Modules & Study Materials
+                          </h4>
+                          <p className="text-[11px] text-slate-500">
+                            {courseModules.length} modules available in {courseName}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                    {courseModules.length > 0 && (
-                      <span className="text-[11px] font-semibold text-blue-800 bg-white border border-blue-200 px-2.5 py-0.5 rounded-full shadow-2xs">
-                        {courseModules.length} Modules in Course
-                      </span>
-                    )}
-                  </div>
+                  )}
 
                   {/* Search input */}
                   <div className="relative">
@@ -817,18 +843,21 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                                 </div>
                               </div>
 
-                              {item.html_url && (
-                                <a
-                                  href={item.html_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
-                                  title="Open directly in Canvas"
-                                >
-                                  <span>Open in Canvas</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                              )}
+                              {(() => {
+                                const humanUrl = getHumanModuleItemWebUrl(item, assignment.course_id, canvasUrl);
+                                return humanUrl ? (
+                                  <a
+                                    href={humanUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
+                                    title="Open directly in Canvas"
+                                  >
+                                    <span>Open in Canvas</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                ) : null;
+                              })()}
                             </div>
                           ))}
                         </div>
@@ -837,8 +866,8 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                   ) : (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                          Proactively Matched Module Resources ({relatedMatches.length})
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          Module Study Materials ({relatedMatches.length})
                         </div>
                         {relatedMatches.length > 0 && (
                           <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
@@ -895,18 +924,21 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
                                 </div>
                               </div>
 
-                              {item?.html_url && (
-                                <a
-                                  href={item.html_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
-                                  title="Open directly in Canvas"
-                                >
-                                  <span>Open in Canvas</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
-                              )}
+                              {(() => {
+                                const humanUrl = getHumanModuleItemWebUrl(item, assignment.course_id, canvasUrl);
+                                return humanUrl ? (
+                                  <a
+                                    href={humanUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 transition cursor-pointer shrink-0"
+                                    title="Open directly in Canvas"
+                                  >
+                                    <span>Open in Canvas</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                ) : null;
+                              })()}
                             </div>
                           ))}
                         </div>
@@ -920,7 +952,7 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 px-6 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+        <div className="p-3.5 sm:p-4 px-4 sm:px-6 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3 shrink-0">
           <button
             type="button"
             onClick={onClose}
@@ -929,17 +961,22 @@ export const AssignmentZoomModal: React.FC<AssignmentZoomModalProps> = ({
             Close
           </button>
 
-          {assignment.html_url && (
-            <a
-              href={assignment.html_url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition cursor-pointer"
-            >
-              <span>Open in Canvas</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
-          )}
+          {(() => {
+            const safeUrl = assignment.is_calendar_event
+              ? getCalendarEventWebUrl(detail || assignment, canvasUrl)
+              : (assignment.html_url && assignment.html_url !== '#' ? assignment.html_url.replace(/\/api\/v1\//g, '/') : null);
+            return safeUrl ? (
+              <a
+                href={safeUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition cursor-pointer"
+              >
+                <span>Open in Canvas</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            ) : null;
+          })()}
         </div>
       </div>
 

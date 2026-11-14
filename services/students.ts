@@ -1,10 +1,14 @@
-import { StudentProfile } from '../types';
+import { StudentProfile, UserSettings } from '../types';
 export type { StudentProfile };
 import { logger } from './logger';
+import { sanitizeCanvasDomain, sanitizeCanvasToken } from '../utils/canvasUrls';
+import { sealProfileToken, unsealProfileToken } from './crypto';
 
 const STUDENTS_STORAGE_KEY = 'canvas_student_profiles_v2';
 const ACTIVE_STUDENT_KEY = 'canvas_active_student_id_v2';
 const FEEDBACK_ACK_PREFIX = 'canvas_ack_feedback_v2_';
+const DISMISSED_ANNOUNCEMENTS_PREFIX = 'velm_dismissed_announcements_v1_';
+const WORKSPACE_SETTINGS_PREFIX = 'velm_workspace_settings_v1_';
 
 const PALETTE = ['blue', 'emerald', 'purple', 'amber', 'rose', 'indigo'];
 
@@ -16,7 +20,11 @@ export const getSavedStudents = (): StudentProfile[] => {
     const raw = localStorage.getItem(STUDENTS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((s: StudentProfile) => ({
+      ...s,
+      apiKey: unsealProfileToken(s.apiKey || ''),
+    }));
   } catch (err: any) {
     logger.warn('Failed to parse student profiles from storage:', err.message);
     return [];
@@ -24,11 +32,15 @@ export const getSavedStudents = (): StudentProfile[] => {
 };
 
 /**
- * Persist student profiles list
+ * Persist student profiles list with sealed API tokens
  */
 const persistStudents = (students: StudentProfile[]): void => {
   try {
-    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(students));
+    const sealed = students.map(s => ({
+      ...s,
+      apiKey: sealProfileToken(s.apiKey || ''),
+    }));
+    localStorage.setItem(STUDENTS_STORAGE_KEY, JSON.stringify(sealed));
   } catch (err: any) {
     logger.error('Failed to save student profiles to storage:', err.message);
   }
@@ -71,6 +83,8 @@ export const saveStudent = (
   
   const newProfile: StudentProfile = {
     ...student,
+    domain: sanitizeCanvasDomain(student.domain) || student.domain.trim(),
+    apiKey: sanitizeCanvasToken(student.apiKey),
     id,
     color,
     createdAt: new Date().toISOString(),
@@ -90,7 +104,11 @@ export const updateStudent = (profile: StudentProfile): void => {
   const students = getSavedStudents();
   const index = students.findIndex(s => s.id === profile.id);
   if (index >= 0) {
-    students[index] = profile;
+    students[index] = {
+      ...profile,
+      domain: sanitizeCanvasDomain(profile.domain) || profile.domain.trim(),
+      apiKey: sanitizeCanvasToken(profile.apiKey),
+    };
     persistStudents(students);
     logger.info(`Updated student profile: ${profile.name}`);
   }
@@ -119,9 +137,11 @@ export const removeStudent = (id: string): void => {
   const filtered = students.filter(s => s.id !== id);
   persistStudents(filtered);
   
-  // Clean up feedback ack storage for that student
+  // Clean up feedback ack, dismissed announcement & workspace settings storage for that student
   try {
     localStorage.removeItem(`${FEEDBACK_ACK_PREFIX}${id}`);
+    localStorage.removeItem(`${DISMISSED_ANNOUNCEMENTS_PREFIX}${id}`);
+    localStorage.removeItem(`${WORKSPACE_SETTINGS_PREFIX}${id}`);
   } catch {
     // ignore
   }
@@ -148,8 +168,12 @@ export const ensureProfileForLogin = (
   batchSize: number = 2,
   suggestedName?: string
 ): StudentProfile => {
+  const cleanDomain = sanitizeCanvasDomain(domain) || domain.trim();
+  const cleanKey = sanitizeCanvasToken(apiKey);
   const students = getSavedStudents();
-  const existing = students.find(s => s.domain === domain && s.apiKey === apiKey);
+  const existing = students.find(
+    s => sanitizeCanvasDomain(s.domain) === cleanDomain && sanitizeCanvasToken(s.apiKey) === cleanKey
+  );
   if (existing) {
     setActiveStudentId(existing.id);
     return existing;
@@ -158,8 +182,8 @@ export const ensureProfileForLogin = (
   const name = suggestedName || `Student ${students.length + 1}`;
   return saveStudent({
     name,
-    domain,
-    apiKey,
+    domain: cleanDomain,
+    apiKey: cleanKey,
     useProxy,
     batchSize,
   });
@@ -229,4 +253,80 @@ export const acknowledgeAllComments = (
   });
   saveAcknowledgedFeedback(studentId, current);
   return new Set(current);
+};
+
+/**
+ * Get dismissed Canvas announcement IDs for a student
+ */
+export const getDismissedAnnouncements = (studentId?: string): Set<string | number> => {
+  const key = `${DISMISSED_ANNOUNCEMENTS_PREFIX}${studentId || 'default'}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (err: any) {
+    logger.warn('Failed to parse dismissed announcements:', err.message);
+    return new Set();
+  }
+};
+
+/**
+ * Save dismissed Canvas announcement IDs for a student
+ */
+export const saveDismissedAnnouncements = (
+  studentId: string | undefined,
+  ids: Set<string | number>
+): void => {
+  const key = `${DISMISSED_ANNOUNCEMENTS_PREFIX}${studentId || 'default'}`;
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(ids)));
+  } catch (err: any) {
+    logger.error('Failed to save dismissed announcements:', err.message);
+  }
+};
+
+/**
+ * Persist dismissal of a single announcement ID for a student
+ */
+export const dismissAnnouncementLocal = (
+  studentId: string | undefined,
+  announcementId: string | number
+): Set<string | number> => {
+  const current = getDismissedAnnouncements(studentId);
+  current.add(announcementId);
+  current.add(String(announcementId));
+  saveDismissedAnnouncements(studentId, current);
+  return new Set(current);
+};
+
+/**
+ * Get locally persisted workspace filter/view settings for a student
+ */
+export const getLocalWorkspaceSettings = (studentId?: string): UserSettings | null => {
+  const key = `${WORKSPACE_SETTINGS_PREFIX}${studentId || 'default'}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as UserSettings) : null;
+  } catch (err: any) {
+    logger.warn('Failed to parse local workspace settings:', err.message);
+    return null;
+  }
+};
+
+/**
+ * Persist workspace filter/view settings locally per student for immediate reload resilience
+ */
+export const saveLocalWorkspaceSettings = (
+  studentId: string | undefined,
+  settings: UserSettings
+): void => {
+  const key = `${WORKSPACE_SETTINGS_PREFIX}${studentId || 'default'}`;
+  try {
+    localStorage.setItem(key, JSON.stringify(settings));
+  } catch (err: any) {
+    logger.warn('Failed to save local workspace settings:', err.message);
+  }
 };

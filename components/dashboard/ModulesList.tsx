@@ -20,6 +20,7 @@ import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { CourseCustomization } from '../../services/courseCustomization';
 import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslationInProgress } from '../../services/translation';
 import { TranslationModal } from './TranslationModal';
+import { getHumanModuleItemWebUrl } from '../../utils/canvasUrls';
 
 interface ModulesListProps {
   modules: CanvasModule[];
@@ -499,27 +500,30 @@ export const ModulesList: React.FC<ModulesListProps> = ({
                     
                     {/* Item Title / Link */}
                     <div className="flex-1 min-w-0">
-                      {item.html_url && !isPage ? (
-                        <a 
-                          href={item.html_url} 
-                          target="_blank" 
-                          rel="noreferrer" 
-                          className="text-xs sm:text-sm text-slate-700 hover:text-blue-600 hover:underline flex items-center gap-1.5 w-fit"
-                          title="Open item in Canvas"
-                        >
-                          <span className="truncate">{item.title}</span>
-                          <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </a>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs sm:text-sm font-medium text-slate-700 truncate">{item.title}</span>
-                          {isPage && (
-                            <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded shrink-0">
-                              {isOpen ? 'Click to collapse' : 'Click to preview'}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                      {(() => {
+                        const humanUrl = getHumanModuleItemWebUrl(item, module.course_id);
+                        return humanUrl && !isPage ? (
+                          <a 
+                            href={humanUrl} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-xs sm:text-sm text-slate-700 hover:text-blue-600 hover:underline flex items-center gap-1.5 w-fit"
+                            title="Open item in Canvas"
+                          >
+                            <span className="truncate">{item.title}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-blue-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </a>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs sm:text-sm font-medium text-slate-700 truncate">{item.title}</span>
+                            {isPage && (
+                              <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded shrink-0">
+                                {isOpen ? 'Click to collapse' : 'Click to preview'}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {langMatch.isLanguageCourse && (() => {
@@ -593,16 +597,19 @@ export const ModulesList: React.FC<ModulesListProps> = ({
                     <div className="p-4 pl-12 bg-slate-50/70 border-t border-slate-100 text-xs text-slate-600 space-y-2 animate-fadeIn">
                       <div className="flex items-center justify-between text-[11px] text-slate-400 pb-2 border-b border-slate-200/60">
                         <span>Canvas Page Item #{item.id}</span>
-                        {item.html_url && (
-                          <a 
-                            href={item.html_url} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="text-blue-600 hover:underline inline-flex items-center gap-1"
-                          >
-                            Open full page in Canvas <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
+                        {(() => {
+                          const humanUrl = getHumanModuleItemWebUrl(item, module.course_id);
+                          return humanUrl ? (
+                            <a 
+                              href={humanUrl} 
+                              target="_blank" 
+                              rel="noreferrer" 
+                              className="text-blue-600 hover:underline inline-flex items-center gap-1"
+                            >
+                              Open full page in Canvas <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : null;
+                        })()}
                       </div>
                       <p className="text-slate-600 italic">
                         Click &quot;Open full page in Canvas&quot; to view rich media, interactive embeds, and discussions for this page.

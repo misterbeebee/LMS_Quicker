@@ -1,9 +1,9 @@
 
 
 import React, { useMemo, useState } from 'react';
-import { CanvasAssignment, CanvasTodoItem, SortKey, SortConfig, FilterMode, CourseData } from '../../types';
+import { CanvasAssignment, CanvasTodoItem, CanvasAnnouncement, SortKey, SortConfig, FilterMode, CourseData } from '../../types';
 import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, CheckCircle2, Megaphone, Loader2 } from 'lucide-react';
-import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate } from '../../utils/dashboard-helpers';
+import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isAssignmentObsolete, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate, formatCalendarEventDate, isPastCalendarEvent } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentDetailFlipSide } from './AssignmentDetailFlipSide';
 import { AssignmentZoomModal } from './AssignmentZoomModal';
@@ -12,6 +12,8 @@ import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslatio
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { CourseCustomization } from '../../services/courseCustomization';
 import { useNow } from '../../utils/useRelativeTime';
+import { extractAssignmentFromTodo, getCalendarEventWebUrl } from '../../utils/canvasUrls';
+import { AnnouncementsWidget } from './AnnouncementsWidget';
 
 interface AssignmentsTableProps {
   assignments: CanvasAssignment[];
@@ -31,6 +33,7 @@ interface AssignmentsTableProps {
   showArchived?: boolean;
   showSubmitted?: boolean;
   showObsolete?: boolean;
+  showPastEvents?: boolean;
   canvasUrl?: string;
   apiKey?: string;
   useProxy?: boolean;
@@ -44,6 +47,8 @@ interface AssignmentsTableProps {
   onOpenGradeSettings?: () => void;
   todoItems?: CanvasTodoItem[];
   onMarkTodoDone?: (item: CanvasTodoItem) => void;
+  announcements?: CanvasAnnouncement[];
+  onDismissAnnouncement?: (announcement: CanvasAnnouncement) => Promise<void>;
   courseCustomizations?: Record<number, CourseCustomization>;
   courses?: CourseData[];
 }
@@ -67,6 +72,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   showArchived = false,
   showSubmitted = false,
   showObsolete = false,
+  showPastEvents = false,
   canvasUrl = '',
   apiKey = '',
   useProxy = false,
@@ -80,6 +86,8 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   onOpenGradeSettings,
   todoItems = [],
   onMarkTodoDone,
+  announcements = [],
+  onDismissAnnouncement,
   courses = []
 }) => {
   const now = useNow();
@@ -110,15 +118,30 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   const toggleFeedbackFilter = onToggleFilterFeedback ? () => onToggleFilterFeedback(!filterFeedbackOnly) : () => setLocalFilterFeedback(!localFilterFeedback);
 
   const upcomingTableCount = useMemo(() => {
-    return assignments.filter(a => !isAssignmentSubmitted(a)).length;
-  }, [assignments]);
+    return assignments.filter(a => {
+      if (!showPastEvents && a.is_calendar_event && isPastCalendarEvent(a)) return false;
+      if (isAssignmentSubmitted(a)) return false;
+      if (!showArchived && (archivedAssignmentIds?.has(a.id) ?? false)) return false;
+      if (!showObsolete && isAssignmentObsolete(a)) return false;
+      return true;
+    }).length;
+  }, [assignments, showPastEvents, showArchived, showObsolete, archivedAssignmentIds]);
 
   const completedTableCount = useMemo(() => {
-    return assignments.filter(a => isAssignmentSubmitted(a)).length;
-  }, [assignments]);
+    return assignments.filter(a => {
+      if (!showPastEvents && a.is_calendar_event && isPastCalendarEvent(a)) return false;
+      if (!isAssignmentSubmitted(a)) return false;
+      if (!showArchived && (archivedAssignmentIds?.has(a.id) ?? false)) return false;
+      return true;
+    }).length;
+  }, [assignments, showPastEvents, showArchived, archivedAssignmentIds]);
 
   const unackTotalCount = useMemo(() => {
     return getUnacknowledgedFeedbackCount(assignments, acknowledgedFeedbackIds || new Set());
+  }, [assignments, acknowledgedFeedbackIds]);
+
+  const feedbackAssignments = useMemo(() => {
+    return assignments.filter(a => hasUnacknowledgedFeedback(a, acknowledgedFeedbackIds || new Set()));
   }, [assignments, acknowledgedFeedbackIds]);
 
   const toggleRowExpand = (id: number) => {
@@ -133,28 +156,19 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   // 1. Filtered Assignments (Workflow Section & Column Filters)
   const filteredAssignments = useMemo(() => {
     return assignments.filter(a => {
-        // Feedback filter: if active, show only items with unacknowledged feedback
-        if (activeFilterFeedback && !hasUnacknowledgedFeedback(a, acknowledgedFeedbackIds || new Set())) {
-          return false;
-        }
-
+        if (!showPastEvents && a.is_calendar_event && isPastCalendarEvent(a)) return false;
         const isSubmitted = isAssignmentSubmitted(a);
 
         // Workflow section separation (Upcoming vs Completed)
-        if (!activeFilterFeedback) {
-          if (workflowSection === 'upcoming' && isSubmitted) return false;
-          if (workflowSection === 'completed' && !isSubmitted) return false;
-        }
+        if (workflowSection === 'upcoming' && isSubmitted) return false;
+        if (workflowSection === 'completed' && !isSubmitted) return false;
 
         // 1. Archived filter: hide unless showArchived is true
         const isArchived = archivedAssignmentIds?.has(a.id) ?? false;
         if (isArchived && !showArchived) return false;
 
         // 2. Obsolete filter: hide items >6 weeks overdue without submission unless showObsolete is true
-        if (!showObsolete && a.due_at && !isSubmitted && !a.is_calendar_event) {
-          const diffDays = (Date.now() - new Date(a.due_at).getTime()) / (1000 * 3600 * 24);
-          if (diffDays > 42) return false;
-        }
+        if (!showObsolete && isAssignmentObsolete(a)) return false;
 
         return Object.entries(columnFilters || {}).every(([key, selectedValues]) => {
             const filters = selectedValues instanceof Set ? selectedValues : new Set(Array.isArray(selectedValues) ? selectedValues : []);
@@ -166,7 +180,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
             return mode === 'include' ? filters.has(val) : !filters.has(val);
         });
     });
-  }, [assignments, workflowSection, columnFilters, filterModes, archivedAssignmentIds, showArchived, showObsolete, activeFilterFeedback, acknowledgedFeedbackIds]);
+  }, [assignments, workflowSection, columnFilters, filterModes, archivedAssignmentIds, showArchived, showObsolete, showPastEvents, activeFilterFeedback, acknowledgedFeedbackIds]);
 
   // 2. Sorted Assignments
   const sortedAssignments = useMemo(() => {
@@ -285,8 +299,15 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
 
   const getUniqueValuesForColumn = (key: string) => {
       const values = new Set<string>();
-      // Use 'assignments' (base) to show all possible options in filter
-      assignments.forEach(a => values.add(getFilterValue(a, key)));
+      assignments.forEach(a => {
+        if (!showPastEvents && a.is_calendar_event && isPastCalendarEvent(a)) return;
+        const isSubmitted = isAssignmentSubmitted(a);
+        if (workflowSection === 'upcoming' && isSubmitted) return;
+        if (workflowSection === 'completed' && !isSubmitted) return;
+        if (!showArchived && (archivedAssignmentIds?.has(a.id) ?? false)) return;
+        if (!showObsolete && isAssignmentObsolete(a)) return;
+        values.add(getFilterValue(a, key));
+      });
       return Array.from(values).sort();
   };
 
@@ -473,9 +494,9 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
           {activeFilterFeedback && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-blue-700 font-medium bg-blue-50 px-2.5 py-1 rounded-lg">
-                Showing assignments with feedback ({sortedAssignments.length})
+                Feedback items ({feedbackAssignments.length})
               </span>
-              {onAcknowledgeAllComments && sortedAssignments.length > 0 && (
+              {onAcknowledgeAllComments && feedbackAssignments.length > 0 && (
                 confirmingTableAckAll ? (
                   <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-1 rounded-lg border border-amber-300 shadow-2xs animate-fadeIn">
                     <span className="text-xs font-semibold text-amber-900">Acknowledge all?</span>
@@ -483,7 +504,7 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                       type="button"
                       onClick={() => {
                         const allCommentIds: (string | number)[] = [];
-                        sortedAssignments.forEach(a => {
+                        feedbackAssignments.forEach(a => {
                           getAssignmentFeedbackComments(a).forEach(c => {
                             if (!acknowledgedFeedbackIds?.has(c.id) && !acknowledgedFeedbackIds?.has(String(c.id))) {
                               allCommentIds.push(c.id);
@@ -521,6 +542,81 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         </div>
       </div>
 
+      {/* Feedback Spotlight Panel above assignments so user can scroll straight past to assignments */}
+      {activeFilterFeedback && (
+        <div className="bg-blue-50/60 border border-blue-200/80 rounded-2xl p-4 space-y-3 animate-fadeIn">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <MessageSquare className="w-4 h-4 text-blue-600" />
+              <span>Instructor Feedback to Review ({feedbackAssignments.length})</span>
+            </h3>
+            <button
+              type="button"
+              onClick={toggleFeedbackFilter}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-900 px-2 py-0.5 rounded bg-white border border-slate-200 cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+          {feedbackAssignments.length === 0 ? (
+            <p className="text-xs text-slate-500 italic">No unreviewed instructor feedback at this time.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+              {feedbackAssignments.map(a => {
+                const comments = getAssignmentFeedbackComments(a).filter(
+                  c => !acknowledgedFeedbackIds?.has(c.id) && !acknowledgedFeedbackIds?.has(String(c.id))
+                );
+                const latestComment = comments[comments.length - 1];
+                return (
+                  <div
+                    key={`fb-${a.id}`}
+                    onClick={() => setZoomedAssignment(a)}
+                    className="bg-white rounded-xl border border-blue-200/80 p-3 shadow-2xs hover:shadow-md hover:border-blue-300 transition cursor-pointer flex flex-col justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-[11px] font-bold text-blue-700 truncate">{getCourseName ? getCourseName(a.course_id) : 'Course'}</span>
+                        <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.2 rounded-full shrink-0">{comments.length} new</span>
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-900 line-clamp-1">{a.name}</h4>
+                      {latestComment && (
+                        <p className="text-[11px] text-slate-600 line-clamp-2 mt-1">{latestComment.comment}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100">
+                      <span className="text-slate-500">Click to read full feedback</span>
+                      {onAcknowledgeAllComments && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAcknowledgeAllComments(getAssignmentFeedbackComments(a).map(c => c.id));
+                          }}
+                          className="text-[10px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                        >
+                          Acknowledge
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Collapsible Canvas Announcements Widget above Canvas To-Do (when in Upcoming view) */}
+      {workflowSection === 'upcoming' && (
+        <AnnouncementsWidget
+          announcements={announcements}
+          onDismissAnnouncement={onDismissAnnouncement}
+          getCourseName={getCourseName}
+          courseCustomizations={courseCustomizations}
+          showIds={showIds}
+        />
+      )}
+
       {/* Integrated Canvas Priority To-Do Section (when in Upcoming view) */}
       {workflowSection === 'upcoming' && todoItems && todoItems.length > 0 && (
         <div className="bg-gradient-to-r from-blue-50/60 via-indigo-50/40 to-slate-50/60 border border-blue-200/80 rounded-2xl p-4 shadow-2xs">
@@ -536,7 +632,6 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                     {todoItems.length} {todoItems.length === 1 ? 'task' : 'tasks'}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500">Official Canvas planner items prioritized for your immediate attention</p>
               </div>
             </div>
 
@@ -554,22 +649,34 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-fadeIn">
               {todoItems.map((item, idx) => {
                 const uniqueKey = item.ignore || item.html_url || String(idx);
-                const title = item.assignment?.name || item.quiz?.title || 'Canvas ToDo';
-                const courseId = item.course_id || item.assignment?.course_id || item.context_id;
+                const extracted = extractAssignmentFromTodo(item, courses || [], canvasUrl);
+                const targetAssignment: CanvasAssignment | null = extracted?.assignment || item.assignment || null;
+
+                const title = item.assignment?.name || item.quiz?.title || (item as any).title || extracted?.assignment?.name || 'Canvas To-Do Item';
+                const courseId = extracted?.courseId || item.course_id || item.assignment?.course_id || item.context_id;
                 const customCourse = courseId ? courseCustomizations?.[courseId] : undefined;
-                const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
-                const courseName = courseId ? getCourseName(courseId) : (customCourse?.abbreviation || rawCourseName);
+                const rawCourseName = extracted?.courseName || (item.context_name ? pruneCourseTitle(item.context_name) : 'Course');
+                const courseName = (courseId && getCourseName) ? getCourseName(courseId) : rawCourseName;
                 const emoji = customCourse?.emoji;
-                const dueAt = item.assignment?.due_at || null;
-                const points = item.assignment?.points_possible;
+                const dueAt = targetAssignment?.due_at || item.assignment?.due_at || null;
+                const points = targetAssignment?.points_possible ?? item.assignment?.points_possible;
                 const isProcessing = processingTodoKey === uniqueKey;
+                const canvasLink = targetAssignment?.html_url || item.assignment?.html_url || item.html_url;
 
                 return (
                   <div
                     key={uniqueKey}
-                    className="relative rounded-xl border border-slate-200/90 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden"
+                    onClick={() => {
+                      if (targetAssignment) {
+                        setZoomedAssignment(targetAssignment);
+                      }
+                    }}
+                    className={`relative rounded-xl border border-slate-200/90 bg-white shadow-xs hover:shadow-md transition-all flex flex-col justify-between overflow-hidden group ${
+                      targetAssignment ? 'cursor-pointer' : ''
+                    }`}
+                    title={targetAssignment ? "Click card to zoom for details" : undefined}
                   >
-                    {/* Flat left accent stripe (replaces border-l-4 to eliminate C-shape curve and tip hooks) */}
+                    {/* Flat left accent stripe */}
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-400/80 pointer-events-none z-10" />
 
                     {/* Top bonded header */}
@@ -578,16 +685,17 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                         {emoji ? `${emoji} ` : ''}{courseName}
                       </span>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {points !== undefined && (
+                        {points !== undefined && points !== null && (
                           <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200/80 px-1.5 py-0.2 rounded-full">
                             {formatPoints(points)}
                           </span>
                         )}
-                        {item.html_url && (
+                        {canvasLink && (
                           <a
-                            href={item.html_url}
+                            href={canvasLink}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
                             className="text-slate-300 hover:text-blue-600 p-0.5 rounded transition"
                             title="Open in Canvas"
                           >
@@ -600,7 +708,18 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                     {/* Body */}
                     <div className="p-3 flex-1 min-w-0 bg-white">
                       <h4 className="text-xs font-semibold text-slate-800 line-clamp-2 leading-snug group-hover:text-blue-600 transition" title={title}>
-                        {title}
+                        {canvasLink ? (
+                          <a
+                            href={canvasLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="hover:underline text-slate-900 hover:text-blue-600 transition"
+                            title="Open in Canvas"
+                          >
+                            {title}
+                          </a>
+                        ) : title}
                       </h4>
                     </div>
 
@@ -613,37 +732,54 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                         </span>
                       </div>
 
-                      {onMarkTodoDone && (
-                        <label
-                          onClick={(e) => e.stopPropagation()}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
-                            isProcessing 
-                              ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
-                              : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
-                          }`}
-                          title="Mark as done and dismiss from Canvas To-Do"
-                        >
-                          {isProcessing ? (
-                            <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
-                          ) : (
-                            <input
-                              type="checkbox"
-                              checked={false}
-                              disabled={isProcessing}
-                              onChange={async () => {
-                                try {
-                                  setProcessingTodoKey(uniqueKey);
-                                  await onMarkTodoDone(item);
-                                } finally {
-                                  setProcessingTodoKey(null);
-                                }
-                              }}
-                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
-                            />
-                          )}
-                          <span>Done?</span>
-                        </label>
-                      )}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {targetAssignment && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setZoomedAssignment(targetAssignment);
+                            }}
+                            className="text-[10px] font-semibold text-slate-700 hover:text-blue-700 bg-white hover:bg-blue-50 px-2 py-0.5 rounded border border-slate-200 hover:border-blue-300 transition inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                            title="Zoom for Details (instructions, rubrics, feedback, module resources)"
+                          >
+                            <Maximize2 className="w-2.5 h-2.5 text-slate-500" />
+                            <span>Zoom</span>
+                          </button>
+                        )}
+
+                        {onMarkTodoDone && (
+                          <label
+                            onClick={(e) => e.stopPropagation()}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold transition cursor-pointer select-none border shadow-2xs ${
+                              isProcessing 
+                                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' 
+                                : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-300 hover:border-emerald-400'
+                            }`}
+                            title="Mark as done and dismiss from Canvas To-Do"
+                          >
+                            {isProcessing ? (
+                              <Loader2 className="w-3 h-3 animate-spin text-blue-600" />
+                            ) : (
+                              <input
+                                type="checkbox"
+                                checked={false}
+                                disabled={isProcessing}
+                                onChange={async () => {
+                                  try {
+                                    setProcessingTodoKey(uniqueKey);
+                                    await onMarkTodoDone(item);
+                                  } finally {
+                                    setProcessingTodoKey(null);
+                                  }
+                                }}
+                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3 h-3 cursor-pointer"
+                              />
+                            )}
+                            <span>Done?</span>
+                          </label>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -653,7 +789,190 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+      {/* 1. Mobile Phone View: Linear Scrolling Assignment Card Feed (md:hidden) */}
+      <div className="md:hidden space-y-3">
+        {sortedAssignments.length === 0 ? (
+          <div className="p-8 bg-white rounded-xl border border-slate-200 text-center text-slate-400 italic text-sm">
+            No assignments found matching filters.
+          </div>
+        ) : (
+          sortedAssignments.map((assignment) => {
+            const status = getAssignmentStatus(assignment);
+            const rowMeta = getRowMeta(assignment);
+            const score = assignment.submission?.score;
+            const courseName = getCourseName ? getCourseName(assignment.course_id) : 'Course';
+            const isArchived = archivedAssignmentIds?.has(assignment.id) ?? false;
+            const isExpanded = expandedRowIds.has(assignment.id);
+            const lockInfo = getAssignmentLockInfo(assignment);
+            const isLocked = lockInfo.isLocked;
+            const isSubmitted = isAssignmentSubmitted(assignment);
+            const types = assignment.submission_types || [];
+            const isPassive = types.includes('on_paper') || types.includes('none') || types.includes('external_tool') || types.includes('not_graded');
+            const safeUrl = (assignment.is_calendar_event
+              ? getCalendarEventWebUrl(assignment, canvasUrl)
+              : (assignment.html_url && assignment.html_url !== '#' ? assignment.html_url : '')) || '';
+
+            return (
+              <div
+                key={assignment.id}
+                className={`bg-white rounded-xl border border-slate-200/90 shadow-2xs overflow-hidden transition-all ${
+                  isArchived ? 'opacity-60 grayscale bg-slate-50' : isExpanded ? 'ring-2 ring-blue-200' : ''
+                }`}
+              >
+                {/* Header Row */}
+                <div className="p-3.5 flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap text-[11px] font-semibold text-slate-500 mb-1">
+                      {showCourseColumn && (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-bold truncate max-w-[140px]">
+                          {courseName}
+                        </span>
+                      )}
+                      {assignment.is_calendar_event ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded shrink-0">
+                          <Calendar className="w-3 h-3 text-purple-600" /> Event
+                        </span>
+                      ) : (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${status.color}`}>
+                          <status.icon className="w-3 h-3" />
+                          <span>{status.label}</span>
+                        </span>
+                      )}
+                      {assignment.points_possible > 0 && !assignment.is_calendar_event && (
+                        <span className="text-slate-400 font-medium">
+                          {formatPoints(assignment.points_possible)}
+                        </span>
+                      )}
+                    </div>
+
+                    <h4 
+                      onClick={() => setZoomedAssignment(assignment)}
+                      className="text-sm font-bold text-slate-900 hover:text-blue-600 transition cursor-pointer leading-snug line-clamp-2"
+                    >
+                      {assignment.name}
+                    </h4>
+
+                    {/* Due Date & Score */}
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-600 flex-wrap gap-2">
+                      <div className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                        <span>
+                          {assignment.is_calendar_event
+                            ? formatCalendarEventDate(assignment)
+                            : formatRelativeDueDate(assignment.due_at, now)}
+                        </span>
+                      </div>
+
+                      {assignment.location_name && (
+                        <span className="text-[11px] text-slate-500 truncate max-w-[150px]">
+                          📍 {assignment.location_name}
+                        </span>
+                      )}
+
+                      {score !== null && score !== undefined && showScores && (
+                        (() => {
+                          const style = getGradeStyle(score, assignment.points_possible, gradeConfig, { isCourseGrade: false });
+                          return (
+                            <span 
+                              className="px-2 py-0.5 rounded-md font-bold text-xs"
+                              style={style.style}
+                            >
+                              {score} / {assignment.points_possible}
+                            </span>
+                          );
+                        })()
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Quick Action Buttons */}
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setZoomedAssignment(assignment)}
+                      className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
+                      title="Zoom full details"
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                    </button>
+
+                    {onToggleMarkedSubmitted && (
+                      <label 
+                        className="flex items-center gap-1 text-[11px] font-medium text-slate-500 cursor-pointer"
+                        title={assignment.manual_marked_submitted ? "Marked submitted" : "Mark submitted"}
+                      >
+                        <span>{assignment.manual_marked_submitted ? 'Done' : 'Done?'}</span>
+                        <input
+                          type="checkbox"
+                          checked={!!assignment.manual_marked_submitted}
+                          onChange={() => onToggleMarkedSubmitted(assignment.id)}
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5 cursor-pointer accent-emerald-600"
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                {/* Inline Details Collapsible */}
+                <div className="px-3.5 pb-2.5 pt-1 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <button
+                    type="button"
+                    onClick={() => toggleRowExpand(assignment.id)}
+                    className="text-xs text-slate-600 hover:text-blue-600 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{isExpanded ? 'Hide Details' : 'View Instructions'}</span>
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onToggleArchived(assignment.id)}
+                      className={`text-[11px] font-medium inline-flex items-center gap-1 px-2 py-0.5 rounded ${
+                        isArchived ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                      }`}
+                      title={isArchived ? "Unarchive assignment" : "Archive assignment"}
+                    >
+                      <Archive className="w-3 h-3" />
+                      <span>{isArchived ? 'Archived' : 'Archive'}</span>
+                    </button>
+
+                    {safeUrl && (
+                      <a
+                        href={safeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-0.5"
+                      >
+                        <span>Canvas</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded Inline Detail Pane on Mobile */}
+                {isExpanded && (
+                  <div className="p-3 bg-white border-t border-slate-200">
+                    <AssignmentDetailFlipSide
+                      assignment={assignment}
+                      courseName={courseName}
+                      canvasUrl={canvasUrl}
+                      apiKey={apiKey}
+                      useProxy={useProxy}
+                      onFlipBack={() => toggleRowExpand(assignment.id)}
+                      variant="table"
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* 2. Desktop/Tablet Wide Table View (hidden md:block) */}
+      <div className="hidden md:block bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
         {/* Backdrop for active filter */}
         {activeFilterColumn && (
            <div className="fixed inset-0 z-40 cursor-default" onClick={() => setActiveFilterColumn(null)} />
@@ -708,6 +1027,9 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
               const types = assignment.submission_types || [];
               const isPassive = types.includes('on_paper') || types.includes('none') || types.includes('external_tool') || types.includes('not_graded');
               const showMaybeSubmitted = isPastDue && isPassive;
+              const safeUrl = (assignment.is_calendar_event
+                ? getCalendarEventWebUrl(assignment, canvasUrl)
+                : (assignment.html_url && assignment.html_url !== '#' ? assignment.html_url : '')) || '';
 
               return (
                 <React.Fragment key={assignment.id}>
@@ -764,9 +1086,9 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                              <Calendar className="w-3 h-3 text-purple-600" /> Event
                           </span>
                         )}
-                        {assignment.html_url ? (
+                        {safeUrl ? (
                           <a 
-                            href={assignment.html_url} 
+                            href={safeUrl} 
                             target="_blank" 
                             rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
@@ -883,7 +1205,11 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
                     </td>
                     <td className="py-2.5 px-3 text-xs text-slate-600">
                       {assignment.due_at ? (
-                        <span className="font-medium text-slate-700">{formatRelativeDueDate(assignment.due_at, now)}</span>
+                        <span className="font-medium text-slate-700">
+                          {assignment.is_calendar_event
+                            ? formatCalendarEventDate(assignment)
+                            : formatRelativeDueDate(assignment.due_at, now)}
+                        </span>
                       ) : <span className="text-slate-400 italic">No Due Date</span>}
                     </td>
                     <td className="py-2.5 px-3">
@@ -1021,20 +1347,22 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
       </div>
       </div>
 
-      <AssignmentZoomModal 
-        assignment={zoomedAssignment}
-        courseName={zoomedAssignment ? getCourseName(zoomedAssignment.course_id) : ''}
-        canvasUrl={canvasUrl}
-        apiKey={apiKey}
-        useProxy={useProxy}
-        onClose={() => setZoomedAssignment(null)}
-        acknowledgedFeedbackIds={acknowledgedFeedbackIds}
-        onToggleAcknowledgeComment={onToggleAcknowledgeComment}
-        onAcknowledgeAllComments={onAcknowledgeAllComments}
-        gradeConfig={gradeConfig}
-        onOpenGradeSettings={onOpenGradeSettings}
-        courseModules={zoomedAssignment && courses ? (courses.find(c => c.course.id === zoomedAssignment.course_id)?.modules || []) : []}
-      />
+      {zoomedAssignment && (
+        <AssignmentZoomModal 
+          assignment={zoomedAssignment}
+          courseName={getCourseName(zoomedAssignment.course_id)}
+          canvasUrl={canvasUrl}
+          apiKey={apiKey}
+          useProxy={useProxy}
+          onClose={() => setZoomedAssignment(null)}
+          acknowledgedFeedbackIds={acknowledgedFeedbackIds}
+          onToggleAcknowledgeComment={onToggleAcknowledgeComment}
+          onAcknowledgeAllComments={onAcknowledgeAllComments}
+          gradeConfig={gradeConfig}
+          onOpenGradeSettings={onOpenGradeSettings}
+          courseModules={courses ? (courses.find(c => c.course.id === zoomedAssignment.course_id)?.modules || []) : []}
+        />
+      )}
 
       {/* World Language Translation Modal */}
       {translatingItem && (

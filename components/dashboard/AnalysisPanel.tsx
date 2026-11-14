@@ -15,7 +15,8 @@ import {
   Check, 
   RotateCcw, 
   Loader2, 
-  ExternalLink 
+  HelpCircle,
+  Edit3
 } from 'lucide-react';
 import { TACTICAL_PROMPTS, TacticalPromptOption } from '../../services/gemini';
 
@@ -32,41 +33,61 @@ const AVAILABLE_MODELS = [
   { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Deep Reasoning)' },
 ];
 
+const CUSTOM_GOAL_ID = 'custom-goal';
+
 export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzing, onAnalyze }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('modules-exams');
-  const [customInstructions, setCustomInstructions] = useState<string>(() => {
-    const defaultPreset = TACTICAL_PROMPTS.find(p => p.id === 'modules-exams') || TACTICAL_PROMPTS[0];
-    return defaultPreset ? defaultPreset.prompt : '';
+  
+  // Custom goal prompt (when custom goal preset is chosen)
+  const [customGoalPrompt, setCustomGoalPrompt] = useState<string>('');
+
+  // General user formatting / tone instructions (saved in settings)
+  const [generalInstructions, setGeneralInstructions] = useState<string>(() => {
+    return localStorage.getItem('velm_ai_general_instructions') || '';
   });
+
   const [selectedModel, setSelectedModel] = useState('gemini-3.8-flash');
   const [copied, setCopied] = useState(false);
 
-  const activePreset = TACTICAL_PROMPTS.find(p => p.id === selectedPresetId) || TACTICAL_PROMPTS[0];
+  const activePreset = TACTICAL_PROMPTS.find(p => p.id === selectedPresetId);
 
-  const handleSelectPreset = (preset: TacticalPromptOption) => {
-    setSelectedPresetId(preset.id);
-    setCustomInstructions(preset.prompt);
+  const handleSelectPreset = (presetId: string) => {
+    setSelectedPresetId(presetId);
   };
 
-  const handleAnalyzeClick = (e?: React.MouseEvent, overridePrompt?: string) => {
+  const handleRunAnalysis = (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setIsCollapsed(false);
-    const promptToUse = overridePrompt !== undefined ? overridePrompt : customInstructions;
-    onAnalyze(promptToUse, selectedModel);
+
+    let goalPrompt = '';
+    if (selectedPresetId === CUSTOM_GOAL_ID) {
+      goalPrompt = customGoalPrompt.trim()
+        ? `TACTICAL FOCUS & USER GOAL:\n${customGoalPrompt.trim()}`
+        : 'Analyze upcoming assignments and current course grades to provide actionable study recommendations.';
+    } else if (activePreset) {
+      goalPrompt = activePreset.prompt;
+    } else {
+      goalPrompt = TACTICAL_PROMPTS[0].prompt;
+    }
+
+    const fullInstructions = generalInstructions.trim()
+      ? `${goalPrompt}\n\nUSER FORMATTING & STYLE INSTRUCTIONS:\n${generalInstructions.trim()}`
+      : goalPrompt;
+
+    onAnalyze(fullInstructions, selectedModel);
   };
 
   const handleCopyReport = async () => {
     if (!analysis) return;
     try {
-      // Strip basic HTML tags for plain text copying
       const plainText = analysis.replace(/<[^>]*>/g, ' ').replace(/\s{2,}/g, ' ').trim();
       await navigator.clipboard.writeText(plainText);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       setCopied(false);
     }
   };
@@ -82,17 +103,21 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
       case 'study-plan-7day':
         return <CalendarDays className={className} />;
       case 'workload-overview':
+        return <Sparkles className={className} />;
+      case CUSTOM_GOAL_ID:
+        return <Edit3 className={className} />;
       default:
         return <Sparkles className={className} />;
     }
   };
 
+  // Render Collapsed: Only the expando button, no action button
   if (isCollapsed) {
     return (
       <div 
         onClick={() => setIsCollapsed(false)}
-        className="mb-3 w-fit inline-flex max-w-full bg-gradient-to-r from-indigo-50/80 to-purple-50/80 hover:from-indigo-100/80 hover:to-purple-100/80 rounded-xl px-3 py-1.5 border border-indigo-200/80 shadow-2xs transition-all items-center gap-2.5 cursor-pointer group"
-        title="Click to expand AI Tactical Advisor"
+        className="mb-3 w-fit inline-flex max-w-full bg-gradient-to-r from-indigo-50/80 to-purple-50/80 hover:from-indigo-100/80 hover:to-purple-100/80 rounded-xl px-3 py-1.5 border border-indigo-200/80 shadow-2xs transition-all items-center gap-2.5 cursor-pointer group select-none"
+        title="Click to expand AI Academic Advisor"
       >
         <div className="flex items-center gap-2 min-w-0">
           <div className="bg-indigo-600 p-1 rounded-md text-white shrink-0">
@@ -101,8 +126,8 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
           <div className="flex items-center gap-1.5 min-w-0">
             <h4 className="text-xs font-bold text-indigo-950 group-hover:text-indigo-700 transition-colors shrink-0">AI Advisor</h4>
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-indigo-800 bg-indigo-100/70 px-1.5 py-0.5 rounded border border-indigo-200/60 truncate">
-              {getPresetIcon(activePreset.id, "w-3 h-3 text-indigo-600")}
-              {activePreset.shortLabel}
+              {getPresetIcon(selectedPresetId, "w-3 h-3 text-indigo-600")}
+              {selectedPresetId === CUSTOM_GOAL_ID ? 'Custom Goal' : (activePreset?.shortLabel || 'Advisor')}
             </span>
             <span className="hidden md:inline text-[11px] text-slate-500 truncate">
               {analysis ? '· Report ready' : '· Click to expand'}
@@ -110,68 +135,47 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button 
-            type="button"
-            onClick={(e) => handleAnalyzeClick(e)}
-            disabled={analyzing}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5 ${
-              analyzing 
-                ? 'bg-white text-slate-400 cursor-not-allowed' 
-                : 'bg-white text-indigo-700 hover:bg-indigo-50 border border-indigo-200/80 cursor-pointer'
-            }`}
-          >
-            {analyzing ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
-                <span>Analyzing...</span>
-              </>
-            ) : (
-              <>
-                <span>{analysis ? 'Re-analyze' : 'Analyze'}</span>
-                <Star className="w-3 h-3 text-amber-500 fill-current" />
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsCollapsed(false);
-            }}
-            className="p-1 rounded-lg text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100/60 transition cursor-pointer"
-            title="Expand section"
-          >
-            <ChevronDown className="w-3.5 h-3.5" />
-          </button>
+        {/* Expando button only */}
+        <div className="p-1 text-indigo-500 group-hover:text-indigo-700 transition">
+          <ChevronDown className="w-4 h-4" />
         </div>
       </div>
     );
   }
 
+  // Render Expanded View
   return (
     <div className="mb-5 bg-gradient-to-r from-indigo-50/90 via-purple-50/60 to-slate-50/80 rounded-xl p-4 border border-indigo-100 shadow-xs transition-all duration-300">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-3">
+      {/* Top Header: Title on left with (?), Collapse button on top-right */}
+      <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-2.5">
           <div className="bg-indigo-600 p-1.5 rounded-lg shadow-2xs text-white shrink-0">
             <BrainCircuit className="w-4 h-4" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-indigo-950">AI Academic Advisor & Tactical Analyzer</h3>
-              <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200">
-                Gemini Powered
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h3 className="text-sm font-bold text-indigo-950">AI Academic Advisor</h3>
+              <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200">
+                Gemini
               </span>
+              
+              {/* Help (?) Button replaces repetitive explanatory text */}
+              <button
+                type="button"
+                onClick={() => setShowHelp(!showHelp)}
+                className={`p-1 rounded-full transition cursor-pointer ${
+                  showHelp ? 'bg-indigo-200 text-indigo-800' : 'text-slate-400 hover:text-indigo-700 hover:bg-indigo-100/70'
+                }`}
+                title="What does the AI Advisor do?"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <p className="text-xs text-slate-600 mt-0.5">
-              Tactical problem solving: link module resources to assignments & exams, triage grades, and schedule prep.
-            </p>
           </div>
         </div>
         
-        <div className="flex items-center gap-1.5 self-end md:self-auto shrink-0">
+        {/* Right Action Bar: Settings, Run Button, and Top-Right Collapse Button */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={() => setShowSettings(!showSettings)}
@@ -180,79 +184,80 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
                 ? 'bg-indigo-100 border-indigo-300 text-indigo-700' 
                 : 'bg-white border-slate-200 text-slate-500 hover:text-indigo-600 hover:bg-slate-50'
             }`}
-            title="Prompt & Model Settings"
+            title="General Instructions & AI Model Settings"
           >
             <Settings2 className="w-4 h-4" />
           </button>
           
           <button 
             type="button"
-            onClick={(e) => handleAnalyzeClick(e)}
+            onClick={(e) => handleRunAnalysis(e)}
             disabled={analyzing}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition flex items-center gap-1.5 cursor-pointer ${
               analyzing 
                 ? 'bg-white text-slate-400 cursor-not-allowed' 
                 : 'bg-indigo-600 hover:bg-indigo-700 text-white border border-indigo-700'
             }`}
-            title="Run analysis with active tactical preset"
+            title="Run analysis with active goal"
           >
             {analyzing ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                <span>Analyzing Workload...</span>
+                <span>Analyzing...</span>
               </>
             ) : (
               <>
                 <Star className="w-3.5 h-3.5 text-amber-300 fill-current" />
-                <span>Run {activePreset.shortLabel}</span>
+                <span>Run {selectedPresetId === CUSTOM_GOAL_ID ? 'Custom Goal' : (activePreset?.shortLabel || 'Analysis')}</span>
               </>
             )}
           </button>
 
+          {/* Prominent Collapse Button in Top-Right Corner */}
           <button
             type="button"
             onClick={() => setIsCollapsed(true)}
-            className="p-1.5 rounded-lg text-indigo-400 hover:text-indigo-700 hover:bg-indigo-100/60 transition cursor-pointer"
-            title="Collapse AI Analysis"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-700 hover:bg-white border border-slate-200 transition cursor-pointer"
+            title="Collapse AI Advisor"
           >
             <ChevronUp className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Tactical Prompt Presets Selector */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1">
-            <Sparkles className="w-3 h-3 text-indigo-600" />
-            Tactical Problem Solving Presets
-          </label>
-          <span className="text-[11px] text-slate-500">
-            Click any tactical option to focus analysis
-          </span>
+      {/* Help Passage: Pops up cleanly when (?) button is clicked */}
+      {showHelp && (
+        <div className="mb-3.5 p-3 bg-white/95 rounded-xl border border-indigo-200 shadow-2xs text-xs text-slate-600 leading-relaxed animate-fadeIn">
+          <p className="font-semibold text-indigo-950 mb-1">About the AI Academic Advisor:</p>
+          <p>
+            The Advisor connects directly to your visible Canvas LMS data. It links lecture slides, study guides, and module pages to upcoming assignments and exams, pinpoints high-impact tasks to rescue low grades, reviews teacher feedback for corrections, and paces out a realistic study plan.
+          </p>
         </div>
+      )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+      {/* Focus Area & Presets Grid (with Custom Goal option at bottom of list) */}
+      <div className="mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {TACTICAL_PROMPTS.map((preset) => {
             const isSelected = preset.id === selectedPresetId;
             return (
               <button
                 key={preset.id}
                 type="button"
-                onClick={() => handleSelectPreset(preset)}
+                onClick={() => handleSelectPreset(preset.id)}
                 className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between group ${
                   isSelected
                     ? 'bg-white border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs'
                     : 'bg-white/80 hover:bg-white border-indigo-100 hover:border-indigo-300 text-slate-700'
                 }`}
               >
-                <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                <div className="flex items-center justify-between gap-1 mb-1.5">
                   <div className={`p-1 rounded-md shrink-0 ${
                     isSelected ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600 group-hover:bg-indigo-50 group-hover:text-indigo-600'
                   }`}>
                     {getPresetIcon(preset.id)}
                   </div>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded truncate ${
+                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded truncate ${
                     isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
                   }`}>
                     {preset.badge}
@@ -269,38 +274,70 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
               </button>
             );
           })}
+
+          {/* Custom Goal Card at the bottom/end of the presets list */}
+          <button
+            type="button"
+            onClick={() => handleSelectPreset(CUSTOM_GOAL_ID)}
+            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between group ${
+              selectedPresetId === CUSTOM_GOAL_ID
+                ? 'bg-white border-indigo-500 ring-2 ring-indigo-500/20 shadow-xs'
+                : 'bg-white/80 hover:bg-white border-indigo-100 hover:border-indigo-300 text-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-1 mb-1.5">
+              <div className={`p-1 rounded-md shrink-0 ${
+                selectedPresetId === CUSTOM_GOAL_ID ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600 group-hover:bg-indigo-50 group-hover:text-indigo-600'
+              }`}>
+                <Edit3 className="w-3.5 h-3.5" />
+              </div>
+              <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded truncate ${
+                selectedPresetId === CUSTOM_GOAL_ID ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-500'
+              }`}>
+                Custom
+              </span>
+            </div>
+            <div>
+              <div className={`text-xs font-bold leading-tight ${selectedPresetId === CUSTOM_GOAL_ID ? 'text-indigo-950' : 'text-slate-800'}`}>
+                Custom Goal
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 leading-relaxed">
+                Enter your own custom question, topic, or analysis target.
+              </p>
+            </div>
+          </button>
         </div>
 
-        {/* Selected Preset Info Banner */}
-        <div className="mt-2.5 p-2.5 bg-white/70 rounded-lg border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="font-bold text-indigo-900 shrink-0">Active Focus:</span>
-            <span className="font-semibold text-slate-800 truncate">{activePreset.title}</span>
+        {/* When Custom Goal is selected, open freeform prompt entry right below */}
+        {selectedPresetId === CUSTOM_GOAL_ID && (
+          <div className="mt-2.5 p-3 bg-white rounded-xl border border-indigo-200 shadow-2xs space-y-1.5 animate-fadeIn">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                <Edit3 className="w-3.5 h-3.5 text-indigo-600" />
+                Custom Analysis Goal
+              </label>
+              <span className="text-[11px] text-slate-400">Target a specific topic or question</span>
+            </div>
+            <textarea
+              value={customGoalPrompt}
+              onChange={(e) => setCustomGoalPrompt(e.target.value)}
+              placeholder="e.g. 'What slides should I study for Unit 3 chemistry lab?' or 'Review my Spanish essay rubric and outline corrections.'"
+              className="w-full h-20 p-2 text-xs border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-slate-800"
+            />
           </div>
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-            <button
-              type="button"
-              onClick={() => handleAnalyzeClick(undefined, activePreset.prompt)}
-              disabled={analyzing}
-              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center gap-1 cursor-pointer"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Reset custom notes to preset
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Settings Drawer (Model selection & Prompt Editor) */}
+      {/* Settings Drawer: General Instructions (Voice/Format) & Model Configuration */}
       {showSettings && (
         <div className="mb-4 animate-fadeIn bg-white p-4 rounded-xl border border-indigo-200 shadow-2xs space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
             <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
               <Settings2 className="w-3.5 h-3.5 text-indigo-600" />
-              Custom Instructions & Model Configuration
+              Advisor Settings: Output Style & Model
             </h4>
             <span className="text-[11px] text-slate-400">
-              Personalize prompt instructions or change LLM model
+              Persistent style instructions applied to all reports
             </span>
           </div>
 
@@ -321,32 +358,31 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
                 ))}
               </select>
               <p className="text-[10px] text-slate-500 mt-1">
-                Gemini 3.8 Flash delivers instant, high-reasoning academic insights.
+                Gemini 3.8 Flash delivers fast, high-reasoning academic insights.
               </p>
             </div>
 
-            {/* Custom Instructions */}
+            {/* General Custom Instructions (Tone, Formatting, Bullet lists) */}
             <div className="md:col-span-2">
               <div className="flex justify-between items-center mb-1.5">
                 <label className="text-xs font-bold text-indigo-800 uppercase tracking-wide">
-                  Prompt Directives & Tactical Goals
+                  General Instructions (Tone, Style & Formatting)
                 </label>
-                <button 
-                  type="button"
-                  onClick={() => setCustomInstructions(activePreset.prompt)} 
-                  className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
-                  title="Reset instructions to current preset text"
-                >
-                  Reset to {activePreset.shortLabel}
-                </button>
+                <span className="text-[10px] text-slate-400">Saved automatically</span>
               </div>
               <textarea
-                value={customInstructions}
-                onChange={(e) => setCustomInstructions(e.target.value)}
-                placeholder="Enter tactical instructions or specific topics (e.g. 'Link Chemistry Chapter 4 slides to homework')."
-                className="w-full h-24 p-2.5 text-xs font-mono border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white resize-none text-slate-800"
-                title="Enter custom instructions for the AI"
+                value={generalInstructions}
+                onChange={(e) => {
+                  setGeneralInstructions(e.target.value);
+                  localStorage.setItem('velm_ai_general_instructions', e.target.value);
+                }}
+                placeholder="e.g. 'Format answers as concise bulleted checklists. Keep tone direct and encouraging. Always bold upcoming deadlines.'"
+                className="w-full h-20 p-2.5 text-xs border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white resize-none text-slate-800"
+                title="General formatting instructions for AI reports"
               />
+              <p className="text-[10px] text-slate-400 mt-1">
+                These personal preferences guide how reports are written across every preset.
+              </p>
             </div>
           </div>
         </div>
@@ -363,7 +399,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
                 Academic Action Report
               </span>
               <span className="text-[10px] font-semibold bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200/60">
-                {activePreset.shortLabel}
+                {selectedPresetId === CUSTOM_GOAL_ID ? 'Custom Goal' : (activePreset?.shortLabel || 'Analysis')}
               </span>
             </div>
             
@@ -389,7 +425,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
               
               <button
                 type="button"
-                onClick={(e) => handleAnalyzeClick(e)}
+                onClick={(e) => handleRunAnalysis(e)}
                 disabled={analyzing}
                 className="px-2.5 py-1 text-xs font-medium rounded-lg border border-indigo-200 text-indigo-700 hover:bg-indigo-50 transition flex items-center gap-1 cursor-pointer"
                 title="Re-run analysis"

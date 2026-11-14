@@ -1,9 +1,35 @@
-
-
-import React from 'react';
-import { CourseData, ALL_COURSES_ID, CanvasCalendarEvent } from '../../types';
-import { ExternalLink, GraduationCap, ClipboardList, Layers, Settings, AlertTriangle, Compass, HelpCircle, Play, Calendar } from 'lucide-react';
-import { isAssignmentSubmitted } from '../../utils/dashboard-helpers';
+import React, { useMemo, useState } from 'react';
+import {
+  CourseData,
+  ALL_COURSES_ID,
+  CanvasCalendarEvent,
+  CanvasAnnouncement,
+} from '../../types';
+import {
+  ExternalLink,
+  GraduationCap,
+  ClipboardList,
+  Layers,
+  Settings,
+  Compass,
+  Play,
+  Bell,
+  Calendar,
+  ChevronDown,
+  MapPin,
+  Database,
+} from 'lucide-react';
+import { getCourseIdFromEvent, getCourseIdFromAnnouncement } from '../../services/canvas';
+import {
+  isAssignmentSubmitted,
+  isAssignmentObsolete,
+  isPastCalendarEvent,
+  formatCalendarEventDate,
+  stripHtml,
+} from '../../utils/dashboard-helpers';
+import { getCalendarEventWebUrl } from '../../utils/canvasUrls';
+import { getEffectiveCourseGrade } from '../../utils/gradeInspector';
+import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { CourseCustomization } from '../../services/courseCustomization';
 import { TutorialId } from './InteractiveTutorialModal';
@@ -11,98 +37,178 @@ import { TutorialId } from './InteractiveTutorialModal';
 interface OverviewProps {
   course: CourseData;
   allCoursesData?: CourseData[];
-  onNavigate: (tab: 'assignments' | 'modules') => void;
+  onNavigate: (tab: 'overview' | 'assignments' | 'calendar' | 'modules') => void;
   showScores?: boolean;
+  showObsolete?: boolean;
+  showArchived?: boolean;
+  archivedAssignmentIds?: Set<number>;
   showCalendarEvents?: boolean;
+  showPastEvents?: boolean;
   calendarEvents?: CanvasCalendarEvent[];
+  announcements?: CanvasAnnouncement[];
+  getCourseName?: (id: number) => string;
+  canvasUrl?: string;
   gradeConfig?: GradeScaleConfig;
   onOpenGradeSettings?: () => void;
+  onInspectCourseGrade?: (courseId: number) => void;
   courseCustomizations?: Record<number, CourseCustomization>;
   onSelectCourse?: (courseId: number) => void;
   onStartTutorial?: (tutorialId?: TutorialId) => void;
 }
 
-export const Overview: React.FC<OverviewProps> = ({ 
-  course, 
+const formatAnnouncementShortDate = (dateStr?: string | null): string => {
+  if (!dateStr) return 'Recently';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'Recently';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+export const Overview: React.FC<OverviewProps> = ({
+  course,
   allCoursesData = [],
-  onNavigate, 
+  onNavigate,
   showScores = true,
-  showCalendarEvents = false,
+  showObsolete = false,
+  showArchived = false,
+  archivedAssignmentIds,
+  showCalendarEvents = true,
+  showPastEvents = false,
   calendarEvents = [],
+  announcements = [],
+  getCourseName,
+  canvasUrl = '',
   gradeConfig = DEFAULT_GRADE_CONFIG,
   onOpenGradeSettings,
+  onInspectCourseGrade,
   courseCustomizations,
   onSelectCourse,
-  onStartTutorial
+  onStartTutorial,
 }) => {
+  const [isAnnouncementsExpanded, setIsAnnouncementsExpanded] = useState(true);
+  const [isCalendarExpanded, setIsCalendarExpanded] = useState(true);
+
   const isMultiCourse = course.course.id === ALL_COURSES_ID;
 
-  // Helper to compute assignment average if official grade is hidden
-  const computeCourseAverage = (c: CourseData) => {
-    let earned = 0;
-    let possible = 0;
-    let gradedCount = 0;
-
-    (c.assignments || []).forEach(a => {
-      if (!a.is_calendar_event && a.points_possible > 0 && a.submission?.score !== null && a.submission?.score !== undefined) {
-        earned += Number(a.submission.score);
-        possible += Number(a.points_possible);
-        gradedCount++;
-      }
-    });
-
-    if (possible > 0 && gradedCount > 0) {
-      return {
-        score: Math.round((earned / possible) * 1000) / 10,
-        gradedCount,
-        isEstimated: true
-      };
-    }
-    return null;
-  };
-
-  const getEffectiveGrade = (c: CourseData): { score: number; letter?: string; isEstimated: boolean; hasData: boolean } | null => {
-    const officialScore = c.enrollment?.grades?.current_score;
-    const officialGrade = c.enrollment?.grades?.current_grade;
-
-    // Count real graded assignments in this course
-    const gradedAssignments = (c.assignments || []).filter(
-      a => !a.is_calendar_event && a.points_possible > 0 && a.submission?.score !== null && a.submission?.score !== undefined
-    );
-
-    // If officialScore is 0 (or officialGrade is F) but there are ZERO graded assignments in the course,
-    // this is a Canvas zero-placeholder for unstarted/ungraded courses, NOT a genuine 0% F.
-    if ((officialScore === 0 || officialGrade?.toUpperCase() === 'F') && gradedAssignments.length === 0) {
-      return null;
-    }
-
-    // Check if official score is a real number (including 0!)
-    if (typeof officialScore === 'number' && !isNaN(officialScore)) {
-      return {
-        score: officialScore,
-        letter: officialGrade || undefined,
-        isEstimated: false,
-        hasData: true
-      };
-    }
-
-    // Try computing from graded assignments
-    const estimated = computeCourseAverage(c);
-    if (estimated) {
-      return {
-        score: estimated.score,
-        letter: undefined,
-        isEstimated: true,
-        hasData: true
-      };
-    }
-
-    return null;
-  };
+  const getEffectiveGrade = (c: CourseData) => getEffectiveCourseGrade(c);
 
   const singleGradeInfo = getEffectiveGrade(course);
-  const notSubmittedCount = (course?.assignments || []).filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
-  const eventCount = (course?.assignments || []).filter(a => !!a.is_calendar_event).length;
+  const notSubmittedCount = (course?.assignments || []).filter((a) => {
+    if (a.is_calendar_event) return false;
+    if (isAssignmentSubmitted(a)) return false;
+    if (!showArchived && (archivedAssignmentIds?.has(a.id) ?? false)) return false;
+    if (!showObsolete && isAssignmentObsolete(a)) return false;
+    return true;
+  }).length;
+
+  const relevantCalendarEvents = useMemo(() => {
+    if (!showCalendarEvents) return [];
+    if (isMultiCourse && course.course.course_code === 'NONE') return [];
+    const nowMs = Date.now();
+
+    const activeCourseIdSet =
+      isMultiCourse && allCoursesData.length > 0
+        ? new Set(allCoursesData.map((c) => c.course.id))
+        : null;
+
+    const fromCourse = (course?.assignments || []).filter((a) => !!a.is_calendar_event);
+    const list =
+      fromCourse.length > 0
+        ? fromCourse
+            .filter((a) => showPastEvents || !isPastCalendarEvent(a, nowMs))
+            .map((a) => ({
+              ...a,
+              html_url:
+                getCalendarEventWebUrl(a, canvasUrl) ||
+                (a.html_url && a.html_url !== '#' ? a.html_url : ''),
+            }))
+        : calendarEvents && calendarEvents.length > 0
+          ? calendarEvents
+              .filter((ev) => {
+                if (!showPastEvents && isPastCalendarEvent(ev, nowMs)) return false;
+                const selectedId = course?.course?.id;
+                const cId = getCourseIdFromEvent(ev);
+                if (!selectedId || selectedId === ALL_COURSES_ID) {
+                  if (cId === null || ev.context_code === 'user_self') return true;
+                  return activeCourseIdSet ? activeCourseIdSet.has(cId) : true;
+                }
+                return cId === selectedId || cId === null || ev.context_code === 'user_self';
+              })
+              .map((ev) => {
+                const cId = getCourseIdFromEvent(ev);
+                return {
+                  id: -Math.abs(ev.id || 99999),
+                  name: ev.title || 'Untitled Event',
+                  description:
+                    ev.description || (ev.location_name ? `Location: ${ev.location_name}` : ''),
+                  due_at:
+                    ev.start_at ||
+                    ev.end_at ||
+                    (ev.all_day_date ? `${ev.all_day_date}T23:59:59Z` : null),
+                  start_at: ev.start_at,
+                  end_at: ev.end_at,
+                  all_day_date: ev.all_day_date,
+                  context_code: ev.effective_context_code || ev.context_code,
+                  points_possible: 0,
+                  course_id: cId || 0,
+                  html_url: getCalendarEventWebUrl(ev, canvasUrl) || '',
+                  submission_types: ['calendar_event'],
+                  locked_for_user: false,
+                  is_calendar_event: true,
+                  location_name: ev.location_name,
+                } as any;
+              })
+          : [];
+
+    return [...list].sort((a, b) => {
+      const ta = new Date(a.start_at || a.due_at || a.end_at || 0).getTime() || 0;
+      const tb = new Date(b.start_at || b.due_at || b.end_at || 0).getTime() || 0;
+      return ta - tb;
+    });
+  }, [
+    course?.assignments,
+    course?.course?.id,
+    course?.course?.course_code,
+    isMultiCourse,
+    allCoursesData,
+    calendarEvents,
+    showCalendarEvents,
+    showPastEvents,
+    canvasUrl,
+  ]);
+
+  const eventCount = relevantCalendarEvents.length;
+  const summaryEvents = relevantCalendarEvents.slice(0, 4);
+
+  // Announcements summary metrics & headlines (prioritize unread first, newest within group)
+  const unreadAnnouncements = useMemo(
+    () => announcements.filter((a) => a.read_state !== 'read'),
+    [announcements]
+  );
+  const unreadAnnouncementCount = unreadAnnouncements.length;
+  const totalAnnouncementCount = announcements.length;
+  const hasReadAnnouncements = totalAnnouncementCount > unreadAnnouncementCount;
+
+  const summaryAnnouncements = useMemo(() => {
+    const sorted = [...announcements].sort((a, b) => {
+      const aUnread = a.read_state !== 'read' ? 1 : 0;
+      const bUnread = b.read_state !== 'read' ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      const ta = new Date(a.posted_at || 0).getTime() || 0;
+      const tb = new Date(b.posted_at || 0).getTime() || 0;
+      return tb - ta;
+    });
+    return sorted.slice(0, 3);
+  }, [announcements]);
+
+  const resolveCourseLabel = (ann: CanvasAnnouncement): string => {
+    const cId = ann.course_id || getCourseIdFromAnnouncement(ann);
+    if (cId && getCourseName) return getCourseName(cId);
+    if (cId) {
+      const match = allCoursesData.find((c) => c.course.id === cId) || (course.course.id === cId ? course : undefined);
+      if (match) return pruneCourseTitle(match.course.nickname || match.course.name);
+    }
+    return ann.context_code || 'Course';
+  };
 
   return (
     <div className="space-y-6">
@@ -115,7 +221,9 @@ export const Overview: React.FC<OverviewProps> = ({
             </div>
             <div>
               <h3 className="font-semibold text-xs text-slate-800">Guided Walkthroughs</h3>
-              <p className="text-[11px] text-slate-500">Automated interactive tours showcasing interface controls and navigation</p>
+              <p className="text-[11px] text-slate-500">
+                Automated interactive tours showcasing interface controls and navigation
+              </p>
             </div>
           </div>
 
@@ -124,7 +232,7 @@ export const Overview: React.FC<OverviewProps> = ({
               type="button"
               onClick={() => onStartTutorial('major_views')}
               className="px-3 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 font-medium text-xs shadow-2xs transition inline-flex items-center gap-1.5 cursor-pointer"
-              title="Tour Major UI Views (Overview, Board, Table, Modules, ToDo)"
+              title="Tour Major UI Views (Overview, Board, Table, Calendar, Modules)"
             >
               <Play className="w-3 h-3 text-blue-600 fill-blue-600" />
               <span>Tour Major Views</span>
@@ -145,7 +253,10 @@ export const Overview: React.FC<OverviewProps> = ({
       {/* Top Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* Grade Card */}
-        <div className="bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 flex items-center justify-between group relative" title="Course Grade Summary">
+        <div
+          className="bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 flex items-center justify-between group relative"
+          title="Course Grade Summary"
+        >
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-slate-100 text-slate-600 shrink-0">
               <GraduationCap className="w-5 h-5" />
@@ -161,18 +272,23 @@ export const Overview: React.FC<OverviewProps> = ({
                   </span>
                 ) : singleGradeInfo && singleGradeInfo.hasData && showScores ? (
                   (() => {
-                    const style = getGradeStyle(singleGradeInfo.score, 100, gradeConfig, { isCourseGrade: true });
+                    const style = getGradeStyle(singleGradeInfo.score, 100, gradeConfig, {
+                      isCourseGrade: true,
+                    });
                     return (
                       <>
-                        <span className="text-xl font-bold" style={{ color: style.style.color || undefined }}>
+                        <span
+                          className="text-xl font-bold"
+                          style={{ color: style.style.color || undefined }}
+                        >
                           {singleGradeInfo.score}%
                         </span>
                         <span className={`text-xs font-bold px-1.5 py-0.2 rounded ${style.badgeClass}`}>
                           {singleGradeInfo.letter || style.letter}
                         </span>
                         {singleGradeInfo.isEstimated && (
-                          <span 
-                            className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help" 
+                          <span
+                            className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help"
                             title="Estimated Course Grade: Canvas does not provide an official course grade for this class, so this is calculated as a heuristic unweighted average of your graded assignments."
                           >
                             Est
@@ -190,21 +306,34 @@ export const Overview: React.FC<OverviewProps> = ({
             </div>
           </div>
 
-          {/* Settings Micro-button */}
-          {onOpenGradeSettings && (
-            <button
-              type="button"
-              onClick={onOpenGradeSettings}
-              className="p-1 rounded-md text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition opacity-0 group-hover:opacity-100 cursor-pointer"
-              title="Configure Grade Threshold Colors"
-            >
-              <Settings className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="flex items-center gap-1 shrink-0">
+            {!isMultiCourse && onInspectCourseGrade && (
+              <button
+                type="button"
+                data-testid="overview-inspect-single-grade"
+                onClick={() => onInspectCourseGrade(course.course.id)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100 border border-blue-200/80 transition cursor-pointer"
+                title="Inspect how this course grade is fetched or calculated"
+              >
+                <Database className="w-3 h-3" />
+                <span>Inspect</span>
+              </button>
+            )}
+            {onOpenGradeSettings && (
+              <button
+                type="button"
+                onClick={onOpenGradeSettings}
+                className="p-1 rounded-md text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition opacity-0 group-hover:opacity-100 cursor-pointer"
+                title="Configure Grade Threshold Colors"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Assignments Card - Compact & Clickable */}
-        <div 
+        <div
           onClick={() => onNavigate('assignments')}
           className="bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 cursor-pointer hover:border-blue-300 hover:shadow-xs transition-all group flex items-center justify-between"
           title="Click to view Assignments"
@@ -214,12 +343,19 @@ export const Overview: React.FC<OverviewProps> = ({
               <ClipboardList className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Assignments</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">
+                Assignments
+              </div>
               <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
-                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">{notSubmittedCount}</span>
+                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">
+                  {notSubmittedCount}
+                </span>
                 <span className="text-xs text-slate-500">not submitted</span>
                 {eventCount > 0 && (
-                  <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded-full" title="Upcoming calendar events merged in">
+                  <span
+                    className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded-full"
+                    title="Calendar events merged in"
+                  >
                     +{eventCount}
                   </span>
                 )}
@@ -230,7 +366,7 @@ export const Overview: React.FC<OverviewProps> = ({
         </div>
 
         {/* Modules Card - Compact & Clickable */}
-        <div 
+        <div
           onClick={() => onNavigate('modules')}
           className="bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 cursor-pointer hover:border-blue-300 hover:shadow-xs transition-all group flex items-center justify-between"
           title="Click to view Modules"
@@ -240,9 +376,13 @@ export const Overview: React.FC<OverviewProps> = ({
               <Layers className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Modules</div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">
+                Modules
+              </div>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">{course?.modules?.length || 0}</span>
+                <span className="text-xl font-bold text-slate-900 group-hover:text-blue-700 transition-colors">
+                  {course?.modules?.length || 0}
+                </span>
                 <span className="text-xs text-slate-500">units</span>
               </div>
             </div>
@@ -251,77 +391,283 @@ export const Overview: React.FC<OverviewProps> = ({
         </div>
       </div>
 
-      {/* Upcoming Calendar Events Panel */}
-      {showCalendarEvents && eventCount > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-100">
-                <Calendar className="w-4 h-4" />
+      {/* Overview Summaries Grid: Announcements Summary & Calendar Events Summary */}
+      <div
+        className={`grid grid-cols-1 ${showCalendarEvents ? 'lg:grid-cols-2' : ''} gap-4`}
+      >
+        {/* Collapsible Announcements Summary */}
+        <section
+          data-testid="overview-announcements-summary"
+          aria-label="Announcements Summary"
+          className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col"
+        >
+          <div
+            className={`flex items-center justify-between gap-2 flex-wrap ${
+              isAnnouncementsExpanded ? 'mb-3.5' : ''
+            }`}
+          >
+            <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+              <div className="p-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200/80 shrink-0">
+                <Bell className="w-4 h-4" />
               </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">Upcoming Calendar Events ({eventCount})</h3>
-                <p className="text-xs text-slate-500">Live events scheduled from Canvas calendar</p>
-              </div>
+              <h3 className="font-bold text-slate-900 text-sm">Announcements Summary</h3>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                {unreadAnnouncementCount} unread
+                {hasReadAnnouncements ? ` / ${totalAnnouncementCount} total` : ''}
+              </span>
             </div>
-            <button
-              type="button"
-              onClick={() => onNavigate('assignments')}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
-            >
-              <span>View in Board</span>
-              <ExternalLink className="w-3 h-3" />
-            </button>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => onNavigate('assignments')}
+                className="text-xs font-semibold text-blue-600 hover:text-blue-700 px-2 py-1 rounded-md hover:bg-blue-50/70 transition cursor-pointer"
+              >
+                View All Announcements
+              </button>
+              <button
+                type="button"
+                aria-expanded={isAnnouncementsExpanded}
+                aria-label={
+                  isAnnouncementsExpanded
+                    ? 'Collapse announcements summary'
+                    : 'Expand announcements summary'
+                }
+                onClick={() => setIsAnnouncementsExpanded((prev) => !prev)}
+                className="text-xs font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-slate-50/70 hover:bg-slate-100 transition cursor-pointer"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${
+                    isAnnouncementsExpanded ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {(course?.assignments || [])
-              .filter(a => !!a.is_calendar_event)
-              .map(ev => {
-                const formattedDate = ev.due_at 
-                  ? new Date(ev.due_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                  : 'Date TBD';
+          {isAnnouncementsExpanded && (
+            summaryAnnouncements.length === 0 ? (
+              <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200/80 text-center">
+                <p className="text-xs font-medium text-slate-600">
+                  No active announcements for the selected courses.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {summaryAnnouncements.map((ann) => {
+                  const hasLink = !!(ann.html_url && ann.html_url !== '#');
+                  const isUnread = ann.read_state !== 'read';
+                  const snippet = stripHtml(ann.message).trim();
+                  const courseLabel = resolveCourseLabel(ann);
 
-                return (
-                  <div key={ev.id} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-purple-200 transition flex flex-col justify-between gap-2.5">
-                    <div className="flex items-start justify-between gap-2">
+                  return (
+                    <div
+                      key={ann.id}
+                      className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/50 hover:bg-white hover:border-amber-200 transition flex flex-col gap-1"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-semibold text-slate-600 truncate">
+                          {courseLabel}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                              isUnread
+                                ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                : 'bg-slate-100 text-slate-500 border border-slate-200'
+                            }`}
+                          >
+                            {isUnread ? 'Unread' : 'Read'}
+                          </span>
+                          <span className="text-slate-400">
+                            {formatAnnouncementShortDate(ann.posted_at)}
+                          </span>
+                        </div>
+                      </div>
+
                       <div className="min-w-0">
-                        <h4 className="font-semibold text-xs text-slate-900 truncate" title={ev.name}>{ev.name}</h4>
-                        {ev.description && (
-                          <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-relaxed">
-                            {ev.description.replace(/<[^>]*>/g, ' ')}
-                          </p>
+                        {hasLink ? (
+                          <a
+                            href={ann.html_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold text-xs text-slate-900 hover:text-amber-700 hover:underline inline-flex items-center gap-1 max-w-full"
+                          >
+                            <span className="truncate">{ann.title}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
+                          </a>
+                        ) : (
+                          <div className="font-semibold text-xs text-slate-900 truncate">
+                            {ann.title}
+                          </div>
+                        )}
+                        {snippet && (
+                          <p className="text-[11px] text-slate-500 truncate mt-0.5">{snippet}</p>
                         )}
                       </div>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 shrink-0">
-                        Event
-                      </span>
                     </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                      <span className="font-medium text-slate-600">
-                        {formattedDate}
-                      </span>
-                      {ev.location_name && (
-                        <span className="truncate max-w-[140px] text-slate-500" title={ev.location_name}>
-                          📍 {ev.location_name}
-                        </span>
-                      )}
-                    </div>
+                  );
+                })}
+                {totalAnnouncementCount > summaryAnnouncements.length && (
+                  <div className="text-right pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('assignments')}
+                      className="text-[11px] font-semibold text-amber-700 hover:underline cursor-pointer"
+                    >
+                      +{totalAnnouncementCount - summaryAnnouncements.length} more announcements
+                    </button>
                   </div>
-                );
-              })}
-          </div>
-        </div>
-      )}
+                )}
+              </div>
+            )
+          )}
+        </section>
+
+        {/* Collapsible Calendar Events Summary */}
+        {showCalendarEvents && (
+          <section
+            data-testid="overview-calendar-summary"
+            aria-label="Calendar Summary"
+            className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col"
+          >
+            <div
+              className={`flex items-center justify-between gap-2 flex-wrap ${
+                isCalendarExpanded ? 'mb-3.5' : ''
+              }`}
+            >
+              <div className="flex items-center gap-2.5 flex-wrap min-w-0">
+                <div className="p-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200/80 shrink-0">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-slate-900 text-sm">
+                  {showPastEvents ? 'Calendar Events' : 'Upcoming Calendar Events'} ({eventCount})
+                </h3>
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => onNavigate('calendar')}
+                  className="text-xs font-semibold text-purple-700 hover:text-purple-900 px-2 py-1 rounded-md hover:bg-purple-50 transition cursor-pointer"
+                >
+                  Open Calendar
+                </button>
+                <button
+                  type="button"
+                  aria-expanded={isCalendarExpanded}
+                  aria-label={
+                    isCalendarExpanded
+                      ? 'Collapse calendar summary'
+                      : 'Expand calendar summary'
+                  }
+                  onClick={() => setIsCalendarExpanded((prev) => !prev)}
+                  className="text-xs font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-slate-50/70 hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform ${
+                      isCalendarExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {isCalendarExpanded && (
+              summaryEvents.length === 0 ? (
+                <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-200/80 text-center">
+                  <p className="text-xs font-medium text-slate-600">
+                    {showPastEvents ? 'No calendar events' : 'No upcoming calendar events'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {summaryEvents.map((ev) => {
+                    const formattedDate = formatCalendarEventDate(ev);
+                    const eventUrl =
+                      getCalendarEventWebUrl(ev, canvasUrl) ||
+                      (ev.html_url && ev.html_url !== '#' ? ev.html_url : null);
+
+                    return (
+                      <div
+                        key={ev.id}
+                        className="p-3 rounded-xl border border-slate-200/90 bg-slate-50/50 hover:bg-white hover:border-purple-200 transition flex flex-col gap-1"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            {eventUrl ? (
+                              <a
+                                href={eventUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-semibold text-xs text-slate-900 hover:text-blue-600 hover:underline inline-flex items-center gap-1 max-w-full"
+                                title={`Open "${ev.name}" in Canvas`}
+                              >
+                                <span className="truncate">{ev.name}</span>
+                                <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
+                              </a>
+                            ) : (
+                              <div className="font-semibold text-xs text-slate-900 truncate">
+                                {ev.name}
+                              </div>
+                            )}
+                          </div>
+                          {eventUrl && (
+                            <a
+                              href={eventUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5 shrink-0"
+                            >
+                              <span>Canvas</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <span className="font-medium text-slate-600 truncate">
+                            {formattedDate}
+                          </span>
+                          {ev.location_name && (
+                            <span
+                              className="truncate max-w-[140px] text-slate-500 inline-flex items-center gap-0.5 shrink-0"
+                              title={ev.location_name}
+                            >
+                              <MapPin className="w-3 h-3 shrink-0 text-slate-400" />
+                              <span className="truncate">{ev.location_name}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {eventCount > summaryEvents.length && (
+                    <div className="text-right pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => onNavigate('calendar')}
+                        className="text-[11px] font-semibold text-purple-700 hover:underline cursor-pointer"
+                      >
+                        +{eventCount - summaryEvents.length} more in Calendar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            )}
+          </section>
+        )}
+      </div>
 
       {/* Multi-Course View: Course Grade & Workload Grid */}
       {isMultiCourse && allCoursesData.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-slate-900 text-sm">Course Academic Standing & Workload</h3>
-              <p className="text-xs text-slate-500">Overview of grades, pending items, and activity across all active courses</p>
+              <h3 className="font-bold text-slate-900 text-sm">
+                Course Academic Standing & Workload
+              </h3>
             </div>
             {onOpenGradeSettings && (
               <button
@@ -339,43 +685,55 @@ export const Overview: React.FC<OverviewProps> = ({
             {allCoursesData.map((c) => {
               const gradeInfo = getEffectiveGrade(c);
               const custom = courseCustomizations?.[c.course.id];
-              const displayName = custom?.abbreviation || c.course.name;
+              const displayName = pruneCourseTitle(c.course.nickname || c.course.name);
               const emoji = custom?.emoji;
-              const pending = (c.assignments || []).filter(a => !a.is_calendar_event && !isAssignmentSubmitted(a)).length;
+              const pending = (c.assignments || []).filter((a) => {
+                if (a.is_calendar_event) return false;
+                if (isAssignmentSubmitted(a)) return false;
+                if (!showArchived && (archivedAssignmentIds?.has(a.id) ?? false)) return false;
+                if (!showObsolete && isAssignmentObsolete(a)) return false;
+                return true;
+              }).length;
 
               return (
-                <div 
+                <div
                   key={c.course.id}
                   onClick={() => onSelectCourse && onSelectCourse(c.course.id)}
                   className="p-3.5 rounded-xl border border-slate-200 hover:border-blue-400 hover:shadow-xs transition-all cursor-pointer bg-slate-50/40 hover:bg-white flex flex-col justify-between group"
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      {emoji ? (
-                        <span className="text-base shrink-0">{emoji}</span>
-                      ) : null}
-                      <span className="font-semibold text-xs text-slate-900 truncate group-hover:text-blue-600 transition-colors" title={c.course.name}>
+                      {emoji ? <span className="text-base shrink-0">{emoji}</span> : null}
+                      <span
+                        className="font-semibold text-xs text-slate-900 truncate group-hover:text-blue-600 transition-colors"
+                        title={c.course.name}
+                      >
                         {displayName}
                       </span>
                     </div>
 
-                    {/* Grade pill with fixed vertical alignment */}
                     {gradeInfo && gradeInfo.hasData && showScores ? (
                       (() => {
-                        const style = getGradeStyle(gradeInfo.score, 100, gradeConfig, { isCourseGrade: true });
+                        const style = getGradeStyle(gradeInfo.score, 100, gradeConfig, {
+                          isCourseGrade: true,
+                        });
                         return (
                           <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
-                            <span className="text-xs font-bold w-12 text-right" style={{ color: style.style.color || undefined }}>
+                            <span
+                              className="text-xs font-bold w-12 text-right"
+                              style={{ color: style.style.color || undefined }}
+                            >
                               {gradeInfo.score}%
                             </span>
-                            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded w-7 text-center shrink-0 ${style.badgeClass}`}>
+                            <span
+                              className={`text-[10px] font-bold px-1.5 py-0.2 rounded w-7 text-center shrink-0 ${style.badgeClass}`}
+                            >
                               {gradeInfo.letter || style.letter}
                             </span>
-                            {/* Reserved fixed-width slot for Est marker so grades fall in an exact vertical line */}
                             <span className="w-7 flex justify-center shrink-0">
                               {gradeInfo.isEstimated ? (
-                                <span 
-                                  className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help" 
+                                <span
+                                  className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help"
                                   title="Estimated Course Grade: Canvas does not provide an official course grade for this class, so this is calculated as a heuristic unweighted average of your graded assignments."
                                 >
                                   Est
@@ -396,10 +754,29 @@ export const Overview: React.FC<OverviewProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                    <span>{pending} pending {pending === 1 ? 'task' : 'tasks'}</span>
-                    <span className="text-slate-400 group-hover:text-blue-600 transition-colors flex items-center gap-0.5">
-                      View <ExternalLink className="w-2.5 h-2.5" />
+                    <span>
+                      {pending} pending {pending === 1 ? 'task' : 'tasks'}
                     </span>
+                    <div className="flex items-center gap-2">
+                      {onInspectCourseGrade && (
+                        <button
+                          type="button"
+                          data-testid={`overview-inspect-grade-${c.course.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onInspectCourseGrade(c.course.id);
+                          }}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-blue-200/70 transition cursor-pointer"
+                          title={`Inspect how ${displayName}'s grade is fetched or calculated`}
+                        >
+                          <Database className="w-2.5 h-2.5" />
+                          <span>Inspect</span>
+                        </button>
+                      )}
+                      <span className="text-slate-400 group-hover:text-blue-600 transition-colors flex items-center gap-0.5">
+                        View <ExternalLink className="w-2.5 h-2.5" />
+                      </span>
+                    </div>
                   </div>
                 </div>
               );

@@ -38,8 +38,8 @@ interface InteractiveTutorialModalProps {
   isOpen: boolean;
   onClose: () => void;
   // Controls passed down from Dashboard to execute actual actions
-  activeTab: 'overview' | 'assignments' | 'modules' | 'canvas_todo';
-  onTabChange: (tab: 'overview' | 'assignments' | 'modules' | 'canvas_todo') => void;
+  activeTab: 'overview' | 'assignments' | 'calendar' | 'modules';
+  onTabChange: (tab: 'overview' | 'assignments' | 'calendar' | 'modules') => void;
   assignmentsViewMode: 'list' | 'board';
   onAssignmentsViewModeChange: (mode: 'list' | 'board') => void;
   onOpenGradeSettings: () => void;
@@ -91,36 +91,32 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
   const tutorials: TutorialDefinition[] = [
     {
       id: 'major_views',
-      title: 'Major UI Views & Navigation',
-      shortDesc: 'Step-by-step tour across Overview, Assignments Board/List, Modules, and Canvas ToDo.',
+      title: 'Navigation & Views',
+      shortDesc: 'Overview, assignments, and modules.',
       iconName: 'layout',
       steps: [
         {
-          title: '1. Course Header & Active Class',
-          description: 'The top left displays your current active course or Multi-Class View summary.',
-          targetSelector: '[data-tutorial="header-title"]',
-          actionHint: 'Examining Course Title...'
+          title: 'Course Header',
+          description: 'Shows active course or all enrolled classes.',
+          targetSelector: '[data-tutorial="header-brand"]'
         },
         {
-          title: '2. Overview Dashboard',
-          description: 'The Overview gives you high-level health metrics: overall course standing, pending assignment count, and module units without clutter.',
+          title: 'Overview',
+          description: 'Summary of grades, pending assignments, and quick course links.',
           targetSelector: '[data-tutorial="nav-tab-overview"]',
-          actionHint: 'Navigating to Overview Tab...',
           onBeforeStep: () => onTabChange('overview')
         },
         {
-          title: '3. Assignments Workspace',
-          description: 'The primary workspace for tracking all coursework. Supports Kanban Board and Table List formats.',
+          title: 'Assignments',
+          description: 'Your coursework list and due dates. Switch between Board and List layout.',
           targetSelector: '[data-tutorial="nav-tab-assignments"]',
-          actionHint: 'Switching to Assignments Tab...',
           onBeforeStep: () => onTabChange('assignments'),
           pulseClick: true
         },
         {
-          title: '4. Kanban Board vs Table List',
-          description: 'Toggle between Board view (grouped by due date buckets) and List view (sortable tabular view with detailed columns).',
+          title: 'Board / List Layout',
+          description: 'View assignments grouped by due date or as a sortable table.',
           targetSelector: '[data-tutorial="view-mode-toggle"]',
-          actionHint: 'Toggling View Modes...',
           onBeforeStep: () => {
             onTabChange('assignments');
             onAssignmentsViewModeChange('board');
@@ -128,68 +124,60 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
           pulseClick: true
         },
         {
-          title: '5. Structured Course Modules',
-          description: 'View syllabus units grouped by class. Modules can be collapsed/expanded individually or in bulk.',
+          title: 'Calendar',
+          description: 'View upcoming Canvas calendar events in Agenda, Week, and Month views.',
+          targetSelector: '[data-tutorial="nav-tab-calendar"]',
+          onBeforeStep: () => onTabChange('calendar'),
+          pulseClick: true
+        },
+        {
+          title: 'Modules',
+          description: 'Course content units and syllabus files organized by class.',
           targetSelector: '[data-tutorial="nav-tab-modules"]',
-          actionHint: 'Navigating to Modules...',
           onBeforeStep: () => onTabChange('modules'),
           pulseClick: true
         },
         {
-          title: '6. Canvas Official To-Do List',
-          description: 'Direct feed from the Canvas student To-Do stream. Allows quick dismissal or direct jumping to assignments.',
-          targetSelector: '[data-tutorial="nav-tab-canvas-todo"]',
-          actionHint: 'Navigating to Canvas ToDo...',
-          onBeforeStep: () => onTabChange('canvas_todo'),
-          pulseClick: true
-        },
-        {
-          title: '7. Multi-Class Sidebar & Customizer',
-          description: 'Re-order courses with drag and drop, toggle visibility, and customize names with emojis.',
-          targetSelector: '[data-tutorial="sidebar-container"]',
-          actionHint: 'Focusing Sidebar...'
+          title: 'Class Sidebar',
+          description: 'Drag to reorder classes, toggle visibility, and set course emojis.',
+          targetSelector: '[data-tutorial="sidebar-container"]'
         }
       ]
     },
     {
       id: 'filters_and_controls',
-      title: 'Data Filters & Concealed Control Panels',
-      shortDesc: 'Master Display popovers, completion filters, calendar events, and color thresholds.',
+      title: 'Display & Filter Controls',
+      shortDesc: 'Display options, completed item filters, and grade colors.',
       iconName: 'sliders',
       steps: [
         {
-          title: '1. Display Options Popover',
-          description: 'Click "Display" to toggle numeric scores, points possible, class average comparisons, and Canvas item IDs.',
+          title: 'Display Menu',
+          description: 'Show or hide scores, points possible, class averages, and item IDs.',
           targetSelector: '[data-tutorial="btn-display-popover"]',
-          actionHint: 'Inspecting Display Controls...',
           pulseClick: true
         },
         {
-          title: '2. Filter Options Popover',
-          description: 'Click "Filter" to hide or reveal submitted assignments, archived items, obsolete homework, and previous quarter terms.',
+          title: 'Filter Menu',
+          description: 'Show or hide submitted assignments, archived items, past terms, and past events.',
           targetSelector: '[data-tutorial="btn-filter-popover"]',
-          actionHint: 'Inspecting Assignment Filters...',
           pulseClick: true
         },
         {
-          title: '3. Calendar Events in Display',
-          description: 'Inside the Display menu, toggle Canvas calendar events directly into your assignments schedule and optionally hide past events.',
-          targetSelector: '[data-tutorial="btn-display-popover"]',
-          actionHint: 'Opening Display Options...'
+          title: 'Calendar Events',
+          description: 'Toggle Canvas calendar events overlay across assignments and Overview.',
+          targetSelector: '[data-tutorial="btn-display-popover"]'
         },
         {
-          title: '4. Grade Thresholds & Tier Blending',
-          description: 'Click the Settings wheel at the top or hover over any grade badge to open the 4-tier color configurator (Green/Yellow/Orange/Red) with smooth RGB blending.',
+          title: 'Grade Thresholds',
+          description: 'Adjust the 4 grade color boundaries with three sliders on one line.',
           targetSelector: '[data-tutorial="btn-grade-settings"]',
-          actionHint: 'Opening Grade Thresholds Panel...',
           onBeforeStep: () => onOpenGradeSettings(),
           pulseClick: true
         },
         {
-          title: '5. Student Notes & State Backup',
-          description: 'Access scratchpad notes saved securely to your personal Canvas files, and manage autosaves across devices.',
-          targetSelector: '[data-tutorial="btn-notes-toggle"]',
-          actionHint: 'Pointing to Canvas Notes...'
+          title: 'Notes & Backup',
+          description: 'Write notes and manage settings saved to your Canvas account.',
+          targetSelector: '[data-tutorial="btn-notes-toggle"]'
         }
       ]
     }
@@ -225,7 +213,7 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
     }
   };
 
-  // Step advancement loop
+  // Step advancement: waits for user to click "Next Step" (no auto-advancement)
   useEffect(() => {
     if (!isPlaying || isPaused) return;
 
@@ -246,19 +234,7 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
       moveCursorToTarget(step.targetSelector, step.pulseClick);
     }, 200);
 
-    // Auto-advance to next step after readable duration (5.5 seconds per step)
-    stepTimerRef.current = setTimeout(() => {
-      if (currentStepIndex < currentTutorial.steps.length - 1) {
-        setCurrentStepIndex(prev => prev + 1);
-      } else {
-        // Finished
-        setIsPlaying(false);
-        setCurrentStepIndex(0);
-      }
-    }, 5500);
-
     return () => {
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
       if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
     };
   }, [isPlaying, isPaused, currentStepIndex, selectedTutorial]);
@@ -412,9 +388,9 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
             />
           )}
 
-          {/* Virtual Floating Mouse Cursor */}
+          {/* Virtual Floating Mouse Cursor (clean without action tooltip) */}
           <div 
-            className="absolute transition-all duration-500 ease-out z-50 pointer-events-none flex items-center gap-1.5"
+            className="absolute transition-all duration-500 ease-out z-50 pointer-events-none flex items-center"
             style={{
               top: `${cursorPos.y}px`,
               left: `${cursorPos.x}px`,
@@ -422,50 +398,82 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
             }}
           >
             <div className="relative">
-              <MousePointer className="w-7 h-7 text-blue-600 fill-blue-600 drop-shadow-md stroke-white stroke-2" />
+              <MousePointer className="w-7 h-7 text-blue-500 fill-blue-500 drop-shadow-md stroke-white stroke-2" />
               {cursorClicking && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-blue-400 animate-ping opacity-75" />
               )}
             </div>
-            {currentStep?.actionHint && (
-              <span className="text-[11px] font-bold text-white bg-slate-900/90 backdrop-blur-xs px-2 py-0.5 rounded shadow-md whitespace-nowrap">
-                {currentStep.actionHint}
-              </span>
-            )}
           </div>
 
-          {/* Floating Tutorial Explainer Banner / HUD (Fixed at bottom center) */}
-          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto max-w-xl w-[92vw]">
-            <div className="bg-slate-900/95 backdrop-blur-md text-white rounded-2xl shadow-2xl border border-slate-700/80 p-4 md:p-5 text-left animate-fadeIn">
-              {/* Header bar of the HUD */}
-              <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <span className="px-2 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px] uppercase tracking-wider">
-                    {currentTutorial.title}
-                  </span>
-                  <span className="text-xs text-slate-400">
-                    Step {currentStepIndex + 1} of {currentTutorial.steps.length}
-                  </span>
-                </div>
+          {/* Floating Tutorial Explainer Banner / HUD (follows target element with viewport boundary clamping) */}
+          {(() => {
+            // Calculate dynamic positioning following targetRect or fallback to bottom
+            let paneStyle: React.CSSProperties = {
+              bottom: '1.5rem',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              position: 'fixed'
+            };
 
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setIsPaused(!isPaused)}
-                    className="px-2 py-1 rounded text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                  >
-                    {isPaused ? 'Resume' : 'Pause'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleStopTutorial}
-                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-                    title="Exit Tutorial"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
+            if (targetRect && typeof window !== 'undefined') {
+              const windowWidth = window.innerWidth;
+              const windowHeight = window.innerHeight;
+              const paneWidth = Math.min(520, windowWidth - 32);
+
+              // Center horizontally over target element, clamped within screen margins
+              const targetCenterX = targetRect.left + targetRect.width / 2;
+              const leftPos = Math.max(16, Math.min(targetCenterX - paneWidth / 2, windowWidth - paneWidth - 16));
+
+              // Determine if we should show below or above target
+              const spaceBelow = windowHeight - targetRect.bottom;
+              const spaceAbove = targetRect.top;
+
+              if (spaceBelow >= 200 || spaceBelow >= spaceAbove) {
+                // Place below target
+                const topPos = Math.min(targetRect.bottom + 16, windowHeight - 220);
+                paneStyle = {
+                  top: `${Math.max(16, topPos)}px`,
+                  left: `${leftPos}px`,
+                  width: `${paneWidth}px`,
+                  position: 'fixed'
+                };
+              } else {
+                // Place above target
+                const bottomPos = windowHeight - targetRect.top + 16;
+                paneStyle = {
+                  bottom: `${Math.max(16, Math.min(bottomPos, windowHeight - 220))}px`,
+                  left: `${leftPos}px`,
+                  width: `${paneWidth}px`,
+                  position: 'fixed'
+                };
+              }
+            }
+
+            return (
+              <div 
+                className="z-50 pointer-events-auto transition-all duration-300"
+                style={paneStyle}
+              >
+                <div className="bg-slate-800/95 backdrop-blur-md text-slate-100 rounded-xl shadow-xl border border-slate-700/80 p-4 text-left animate-fadeIn">
+                  {/* Header bar of the HUD */}
+                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-300">
+                        Step {currentStepIndex + 1} of {currentTutorial.steps.length}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleStopTutorial}
+                        className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-700 transition cursor-pointer"
+                        title="Close"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
 
               {/* Step Title & Description */}
               <div className="mb-4">
@@ -518,8 +526,10 @@ export const InteractiveTutorialModal: React.FC<InteractiveTutorialModalProps> =
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+    </div>
+  )}
     </>
   );
 };

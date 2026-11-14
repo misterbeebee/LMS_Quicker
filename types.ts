@@ -35,22 +35,29 @@ export interface UserSettings {
     showScores: boolean; // New: Show/Hide grades globally
 
     showIds: boolean;
-    showCalendarEvents?: boolean; // Experimental: Merge future calendar events into Assignments & Overview
-    hidePastEvents?: boolean; // Toggle to hide past calendar events
+    showClassAverages?: boolean;
+    showCalendarEvents?: boolean; // Merge calendar events into Assignments & Calendar view
+    calendarEventsV2?: boolean; // Migrated preference ensuring default on
+    showPastEvents?: boolean; // Positive boolean: show past calendar events (defaults false)
+    calendarViewMode?: 'agenda' | 'week' | 'month';
+    filterFeedbackOnly?: boolean;
     // Renamed from showManuallyHidden
     showArchived: boolean;
     // Renamed from hiddenAssignmentIds
     archivedAssignmentIds: number[];
     // New: Manually marked as submitted
     markedAsSubmittedIds?: number[];
+    // Dismissed Canvas announcement IDs synced per student
+    dismissedAnnouncementIds?: (string | number)[];
     
-    // Legacy support types (optional)
+    // Legacy support types (optional, migrated on load)
     showCompleted?: boolean;
     showManuallyHidden?: boolean;
     hiddenAssignmentIds?: number[];
     hideSubmittedGraded?: boolean;
     hideObsolete?: boolean;
     hidePreviousQuarters?: boolean;
+    hidePastEvents?: boolean;
 
     activeTab: string;
     isSidebarCollapsed: boolean;
@@ -79,6 +86,8 @@ export interface UserSettings {
 export interface CanvasTerm {
   id: number;
   name: string;
+  start_at?: string;
+  end_at?: string;
 }
 
 export interface CanvasCourse {
@@ -109,6 +118,13 @@ export interface CanvasSubmission {
   graded_at?: string | null;
   submission_comments?: CanvasSubmissionComment[];
   user_id?: number;
+  excused?: boolean | null;
+  missing?: boolean;
+  late?: boolean;
+  entered_score?: number | null;
+  entered_grade?: string | null;
+  posted_at?: string | null;
+  workflow_state?: string;
 }
 
 export interface CanvasCalendarEvent {
@@ -184,6 +200,10 @@ export interface CanvasAssignment {
   manual_marked_submitted?: boolean; // App-specific override
   is_calendar_event?: boolean; // Experimental: calendar event merged into assignments
   location_name?: string;
+  start_at?: string | null;
+  end_at?: string | null;
+  all_day_date?: string | null;
+  context_code?: string;
   // Optional pre-fetched / detailed fields
   unlock_at?: string | null;
   lock_at?: string | null;
@@ -196,6 +216,9 @@ export interface CanvasAssignment {
   };
   score_statistics?: CanvasScoreStatistics;
   lock_explanation?: string;
+  assignment_group_id?: number;
+  omit_from_final_grade?: boolean;
+  muted?: boolean;
 }
 
 export interface CanvasModuleItem {
@@ -204,6 +227,8 @@ export interface CanvasModuleItem {
   type: string;
   module_id: number;
   html_url?: string;
+  url?: string;
+  page_url?: string;
   content_id?: number;
   content_details?: {
     due_at?: string | null;
@@ -223,16 +248,75 @@ export interface CanvasModule {
   completed_at?: string | null;
 }
 
+export interface CanvasEnrollmentGrades {
+  current_score: number | null;
+  current_grade: string | null;
+  final_score: number | null;
+  final_grade: string | null;
+  unposted_current_score?: number | null;
+  unposted_current_grade?: string | null;
+  unposted_final_score?: number | null;
+  unposted_final_grade?: string | null;
+  override_score?: number | null;
+  override_grade?: string | null;
+  current_period_computed_current_score?: number | null;
+  current_period_computed_current_grade?: string | null;
+  current_period_computed_final_score?: number | null;
+  current_period_computed_final_grade?: string | null;
+  current_period_unposted_current_score?: number | null;
+  current_period_unposted_current_grade?: string | null;
+  html_url?: string;
+}
+
 export interface CanvasEnrollment {
   id: number;
   course_id: number;
-  grades: {
-    current_score: number | null;
-    current_grade: string | null;
-    final_score: number | null;
-    final_grade: string | null;
-  };
+  grades: CanvasEnrollmentGrades;
   type: string;
+  enrollment_state?: string;
+  role?: string;
+  user_id?: number;
+  associated_user_id?: number;
+  current_grading_period_id?: number | null;
+  current_grading_period_title?: string | null;
+  computed_current_score?: number | null;
+  computed_current_grade?: string | null;
+  computed_final_score?: number | null;
+  computed_final_grade?: string | null;
+  current_period_computed_current_score?: number | null;
+  current_period_computed_current_grade?: string | null;
+}
+
+export interface CanvasAssignmentGroup {
+  id: number;
+  name: string;
+  position?: number;
+  group_weight?: number;
+  rules?: {
+    drop_lowest?: number;
+    drop_highest?: number;
+    never_drop?: number[];
+  };
+  assignments?: CanvasAssignment[];
+}
+
+export interface CourseGradeSourceMeta {
+  endpoint: string;
+  fetchedAt: string;
+  selectedEnrollmentId?: number;
+  enrollmentsCount?: number;
+  applyAssignmentGroupWeights?: boolean;
+  gradingStandardId?: number | null;
+}
+
+export interface CourseGradeDiagnosticsResult {
+  courseId: number;
+  fetchedAt: string;
+  courseRaw?: any;
+  enrollmentsRaw: CanvasEnrollment[];
+  assignmentGroupsRaw: CanvasAssignmentGroup[];
+  endpoints: string[];
+  errors: string[];
 }
 
 export interface CanvasTodoItem {
@@ -241,10 +325,30 @@ export interface CanvasTodoItem {
   quiz?: any;
   ignore?: string; // URL to ignore/dismiss
   ignore_permanently?: string;
-  html_url: string;
+  html_url?: string;
   context_name?: string;
   course_id?: number;
-  context_id: number; // usually course_id
+  context_id?: number; // usually course_id
+}
+
+export interface CanvasAnnouncement {
+  id: number;
+  title: string;
+  message: string;
+  posted_at: string | null;
+  created_at?: string | null;
+  last_reply_at?: string | null;
+  context_code?: string;
+  course_id?: number;
+  html_url?: string;
+  read_state?: 'read' | 'unread';
+  unread_count?: number;
+  workflow_state?: string;
+  author?: {
+    id?: number;
+    display_name?: string;
+    avatar_image_url?: string;
+  };
 }
 
 // Aggregated Data Structure for the App
@@ -253,6 +357,9 @@ export interface CourseData {
   assignments: CanvasAssignment[];
   modules: CanvasModule[];
   enrollment?: CanvasEnrollment; // Grades live here typically
+  enrollmentsRaw?: CanvasEnrollment[]; // All enrollment rows returned by Canvas for this course
+  assignmentGroups?: CanvasAssignmentGroup[];
+  gradeSourceMeta?: CourseGradeSourceMeta;
 }
 
 export interface StudentProfile {
@@ -275,6 +382,7 @@ export interface AppState {
   error: string | null;
   useProxy: boolean;
   todoItems?: CanvasTodoItem[];
+  announcements?: CanvasAnnouncement[];
   currentStudentId?: string;
   studentProfiles?: StudentProfile[];
 }

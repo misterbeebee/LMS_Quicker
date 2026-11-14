@@ -11,21 +11,24 @@ import {
   School,
   Key,
   ShieldCheck,
-  AlertCircle
+  AlertCircle,
+  Edit2
 } from 'lucide-react';
 import { 
   getSavedStudents, 
   saveStudent, 
+  updateStudent,
   removeStudent, 
-  setActiveStudentId,
   getActiveStudent
 } from '../../services/students';
+import { sanitizeCanvasDomain, sanitizeCanvasToken } from '../../utils/canvasUrls';
 
 interface StudentSwitcherProps {
   currentStudentId?: string;
   currentStudentName?: string;
   currentDomain?: string;
   onSwitchStudent: (student: StudentProfile) => void;
+  onRenameStudent?: (newName: string) => void;
   compact?: boolean;
 }
 
@@ -43,13 +46,18 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
   currentStudentName,
   currentDomain,
   onSwitchStudent,
+  onRenameStudent,
   compact = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [students, setStudents] = useState<StudentProfile[]>(() => getSavedStudents());
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState('');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   
-  // Add modal form state
+  // Add/Edit modal form state
   const [name, setName] = useState('');
   const [domain, setDomain] = useState(currentDomain || 'mcpsmd.instructure.com');
   const [token, setToken] = useState('');
@@ -74,24 +82,36 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
   }, []);
 
   const activeStudent = students.find(s => s.id === currentStudentId) || getActiveStudent();
-  const displayName = currentStudentName || activeStudent?.name || 'Student Account';
+  const displayName = currentStudentName || activeStudent?.name || 'Set Student';
   const initial = displayName.charAt(0).toUpperCase() || 'S';
   const activeColor = activeStudent?.color && COLOR_CLASSES[activeStudent.color] 
     ? COLOR_CLASSES[activeStudent.color] 
     : COLOR_CLASSES.blue;
 
   const handleSelectStudent = (student: StudentProfile) => {
-    setActiveStudentId(student.id);
     onSwitchStudent(student);
     setIsOpen(false);
   };
 
   const handleOpenAddModal = () => {
     setIsOpen(false);
+    setEditingStudentId(null);
     setName('');
-    setDomain(currentDomain || 'mcpsmd.instructure.com');
+    setDomain(currentDomain && currentDomain !== 'DEMO' ? currentDomain : 'mcpsmd.instructure.com');
     setToken('');
     setColor(['blue', 'emerald', 'purple', 'amber', 'rose'][students.length % 5]);
+    setFormError(null);
+    setIsAddModalOpen(true);
+  };
+
+  const handleOpenEditModal = (e: React.MouseEvent, student: StudentProfile) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    setEditingStudentId(student.id);
+    setName(student.name);
+    setDomain(student.domain);
+    setToken(student.apiKey);
+    setColor(student.color || 'blue');
     setFormError(null);
     setIsAddModalOpen(true);
   };
@@ -102,81 +122,174 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
       setFormError('Please enter the student\'s name or nickname.');
       return;
     }
-    if (!domain.trim()) {
+    const cleanDomain = sanitizeCanvasDomain(domain);
+    if (!cleanDomain) {
       setFormError('Please enter the Canvas domain (e.g. school.instructure.com).');
       return;
     }
-    if (!token.trim()) {
+    const cleanToken = sanitizeCanvasToken(token);
+    if (!cleanToken) {
       setFormError('Please provide the student\'s Canvas API Access Token.');
       return;
     }
 
-    const cleanDomain = domain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const cleanToken = token.trim();
-
     try {
-      const created = saveStudent({
-        name: name.trim(),
-        domain: cleanDomain,
-        apiKey: cleanToken,
-        color,
-        useProxy: true,
-        batchSize: 2,
-      });
+      if (editingStudentId) {
+        const existing = students.find(s => s.id === editingStudentId);
+        const updatedProfile: StudentProfile = {
+          id: editingStudentId,
+          name: name.trim(),
+          domain: cleanDomain,
+          apiKey: cleanToken,
+          color,
+          useProxy: existing?.useProxy ?? true,
+          batchSize: existing?.batchSize || 2,
+          createdAt: existing?.createdAt || new Date().toISOString(),
+        };
+        updateStudent(updatedProfile);
+        refreshList();
+        setIsAddModalOpen(false);
+        setEditingStudentId(null);
+        onSwitchStudent(updatedProfile);
+      } else {
+        const created = saveStudent({
+          name: name.trim(),
+          domain: cleanDomain,
+          apiKey: cleanToken,
+          color,
+          useProxy: true,
+          batchSize: 2,
+        });
 
-      refreshList();
-      setIsAddModalOpen(false);
-      onSwitchStudent(created);
+        refreshList();
+        setIsAddModalOpen(false);
+        onSwitchStudent(created);
+      }
     } catch (err: any) {
       setFormError(err.message || 'Failed to save student profile.');
     }
   };
 
-  const handleDeleteStudent = (e: React.MouseEvent, id: string, studentName: string) => {
+  const handleDeleteStudent = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (confirm(`Remove profile for "${studentName}"? You can add it back later.`)) {
-      removeStudent(id);
+    setPendingDeleteId(id);
+  };
+
+  const confirmDeleteStudent = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    removeStudent(id);
+    setPendingDeleteId(null);
+    refreshList();
+  };
+
+  const handleSaveRename = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = editedName.trim();
+    if (trimmed && onRenameStudent) {
+      onRenameStudent(trimmed);
       refreshList();
     }
+    setIsEditingName(false);
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      {/* Trigger Button */}
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 rounded-xl border transition-all cursor-pointer select-none ${
-          compact 
-            ? 'p-1.5 bg-white border-slate-200 hover:bg-slate-100 text-slate-700 shadow-2xs' 
-            : 'px-2.5 py-1.5 bg-white border-slate-200/90 shadow-2xs hover:border-blue-300 hover:shadow-xs text-slate-800 max-w-[170px]'
-        }`}
-        title={`Current Student: ${displayName} - Click to switch student`}
-      >
-        <div className={`w-6 h-6 rounded-lg ${activeColor.bg} ${activeColor.text} font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs`}>
-          {initial}
-        </div>
-        {!compact && (
-          <div className="text-left min-w-0 pr-0.5 flex-1">
-            <div className="text-xs font-bold leading-tight truncate text-slate-800">
-              {displayName}
+    <div className="relative flex items-center gap-1 min-w-0" ref={dropdownRef}>
+      {/* Merged Top-Left Student Controller & Inline Rename */}
+      {isEditingName ? (
+        <form
+          onSubmit={handleSaveRename}
+          className="inline-flex items-center gap-1 bg-white border border-blue-400 rounded-xl px-1.5 py-1 shadow-xs max-w-[200px]"
+        >
+          <input
+            type="text"
+            value={editedName}
+            onChange={(e) => setEditedName(e.target.value)}
+            autoFocus
+            className="text-xs font-semibold text-slate-800 bg-transparent outline-hidden w-24 min-w-0"
+            placeholder="Student name"
+          />
+          <button
+            type="submit"
+            className="px-1.5 py-0.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-[10px] font-bold cursor-pointer shrink-0"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsEditingName(false)}
+            className="p-0.5 text-slate-400 hover:text-slate-600 text-[10px] font-bold cursor-pointer shrink-0"
+            title="Cancel"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </form>
+      ) : (
+        <div className={`flex items-center rounded-xl border transition-all bg-white border-slate-200/90 shadow-2xs hover:border-blue-300 hover:shadow-xs text-slate-800 ${
+          compact ? 'p-1' : 'pl-2 pr-1 py-1 max-w-[190px]'
+        }`}>
+          <button
+            type="button"
+            onClick={() => setIsOpen(!isOpen)}
+            className="flex items-center gap-1.5 min-w-0 flex-1 text-left cursor-pointer select-none"
+            title={`Current Student: ${displayName} - Click to switch or manage student`}
+          >
+            <div className={`w-6 h-6 rounded-lg ${activeColor.bg} ${activeColor.text} font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs`}>
+              {initial}
             </div>
-          </div>
-        )}
-        <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+            {!compact && (
+              <span className="text-xs font-bold leading-tight truncate text-slate-800 pr-0.5">
+                {displayName}
+              </span>
+            )}
+            <ChevronDown className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {!compact && onRenameStudent && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditedName(currentStudentName || activeStudent?.name || '');
+                setIsEditingName(true);
+                setIsOpen(false);
+              }}
+              className="p-1 ml-0.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer shrink-0"
+              title="Rename student"
+            >
+              <Edit2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Dropdown Menu */}
       {isOpen && (
         <div className={`absolute ${compact ? 'left-full top-0 ml-2' : 'left-0 top-full mt-1.5'} w-72 bg-white rounded-2xl shadow-xl border border-slate-200/80 py-2 z-50 animate-fadeIn`}>
-          <div className="px-3.5 py-2 border-b border-slate-100 flex items-center justify-between">
+          <div className="px-3.5 py-2 border-b border-slate-100 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
               <Users className="w-3.5 h-3.5 text-blue-600" />
               Student Profiles
             </div>
-            <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-              {students.length} {students.length === 1 ? 'student' : 'students'}
-            </span>
+            <div className="flex items-center gap-1.5">
+              {onRenameStudent && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditedName(currentStudentName || activeStudent?.name || '');
+                    setIsEditingName(true);
+                    setIsOpen(false);
+                  }}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full transition cursor-pointer"
+                  title="Rename current student"
+                >
+                  <Edit2 className="w-2.5 h-2.5" />
+                  Rename
+                </button>
+              )}
+              <span className="text-[10px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                {students.length}
+              </span>
+            </div>
           </div>
 
           {/* Student List */}
@@ -215,17 +328,48 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0 ml-2">
-                      {isSelected ? (
-                        <Check className="w-4 h-4 text-blue-600" />
+                      {pendingDeleteId === student.id ? (
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={(e) => confirmDeleteStudent(e, student.id)}
+                            className="px-1.5 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold transition cursor-pointer"
+                            title="Confirm removal"
+                          >
+                            Remove
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setPendingDeleteId(null); }}
+                            className="p-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 transition cursor-pointer"
+                            title="Cancel"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteStudent(e, student.id, student.name)}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded transition cursor-pointer"
-                          title="Remove student profile"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenEditModal(e, student)}
+                            className="opacity-70 sm:opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition cursor-pointer"
+                            title={`Edit token & settings for ${student.name}`}
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                          </button>
+                          {isSelected ? (
+                            <Check className="w-4 h-4 text-blue-600" />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteStudent(e, student.id)}
+                              className="opacity-70 sm:opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-600 hover:bg-red-50 rounded transition cursor-pointer"
+                              title="Remove student profile"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -264,8 +408,9 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
                   <UserPlus className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Add Student Profile</h3>
-                  <p className="text-[11px] text-slate-500">Easily switch between children without logging out</p>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    {editingStudentId ? 'Edit Student Credentials' : 'Add Student Profile'}
+                  </h3>
                 </div>
               </div>
               <button 

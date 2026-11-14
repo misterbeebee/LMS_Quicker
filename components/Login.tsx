@@ -6,7 +6,7 @@ import { logger } from '../services/logger';
 import { getSavedStudents, StudentProfile, setActiveStudentId, getActiveStudent } from '../services/students';
 
 interface LoginProps {
-  onLogin: (domain: string, token: string, isDemo: boolean, useProxy: boolean, batchSize: number, studentId?: string) => void;
+  onLogin: (domain: string, token: string, isDemo: boolean, useProxy: boolean, batchSize: number, studentId?: string, staySignedIn?: boolean) => void;
   onDebug: (domain: string, token: string, useProxy: boolean) => void;
   loading: boolean;
   error: string | null;
@@ -24,7 +24,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   // Mode: 'UNLOCK', 'SETUP', or 'BACKUP'
   const [mode, setMode] = useState<'SETUP' | 'UNLOCK' | 'BACKUP'>('SETUP');
   const [previousMode, setPreviousMode] = useState<'SETUP' | 'UNLOCK'>('SETUP');
-  const [savedStudents, setSavedStudents] = useState<StudentProfile[]>(() => getSavedStudents());
+  const [savedStudents] = useState<StudentProfile[]>(() => getSavedStudents());
+  const [setupTab, setSetupTab] = useState<'saved' | 'new'>(() => (getSavedStudents().length > 0 ? 'saved' : 'new'));
+  const [staySignedIn, setStaySignedIn] = useState<boolean>(() => localStorage.getItem('velm_auto_login_enabled') === 'true');
   
   // Setup State
   const [domain, setDomain] = useState('mcpsmd.instructure.com');
@@ -57,6 +59,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   // Validation State
   const [showTokenConfirmation, setShowTokenConfirmation] = useState(false);
   const [submittedToken, setSubmittedToken] = useState<string | null>(null);
+  const [confirmClearSaved, setConfirmClearSaved] = useState(false);
 
   useEffect(() => {
     loadFromStorage();
@@ -109,7 +112,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
       setProcessing(false);
     }
 
-    onLogin(cleanDomain, cleanToken, false, useProxy, batchSize);
+    onLogin(cleanDomain, cleanToken, false, useProxy, batchSize, undefined, staySignedIn);
   };
 
   const handleSetupSubmit = async (e: React.FormEvent) => {
@@ -150,7 +153,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
       setSubmittedToken(cleanToken); // Store for error checking
       
       logger.info("Unlock successful, proceeding to login.");
-      onLogin(storedData.domain, cleanToken, false, storedData.useProxy ?? true, storedData.batchSize || 2);
+      onLogin(storedData.domain, cleanToken, false, storedData.useProxy ?? true, storedData.batchSize || 2, undefined, staySignedIn);
     } catch (err) {
       logger.warn("Unlock failed: Incorrect passphrase.");
       setLocalError("Incorrect passphrase or corrupted data.");
@@ -202,14 +205,13 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   };
 
   const clearSavedData = () => {
-    if (window.confirm("Are you sure you want to remove your account? This will delete the encrypted key from this browser.")) {
-      localStorage.removeItem(STORAGE_KEY);
-      setStoredData(null);
-      setMode('SETUP');
-      setLocalError(null);
-      setIsChangingPass(false);
-      logger.info("User removed saved credentials.");
-    }
+    localStorage.removeItem(STORAGE_KEY);
+    setStoredData(null);
+    setConfirmClearSaved(false);
+    setMode('SETUP');
+    setLocalError(null);
+    setIsChangingPass(false);
+    logger.info("User removed saved credentials.");
   };
 
   const openBackup = () => {
@@ -257,7 +259,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
 
   const handleLoginWithSavedStudent = (student: StudentProfile) => {
     setActiveStudentId(student.id);
-    onLogin(student.domain, student.apiKey, false, student.useProxy ?? true, student.batchSize || 2, student.id);
+    onLogin(student.domain, student.apiKey, false, student.useProxy ?? true, student.batchSize || 2, student.id, staySignedIn);
   };
 
   const getDetailedErrorMessage = () => {
@@ -386,84 +388,134 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
 
   // Render Main Login / Unlock View
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-      <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full border border-slate-200 relative">
-        <div className="text-center mb-8">
-          <div className="h-16 w-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            {mode === 'UNLOCK' ? <Lock className="w-8 h-8 text-white" /> : <Unlock className="w-8 h-8 text-white" />}
+    <div className="h-dvh overflow-y-auto flex items-center justify-center bg-slate-100 p-2.5 sm:p-4">
+      <div className="bg-white p-3.5 sm:p-4 rounded-xl shadow-md max-w-sm w-full border border-slate-200 relative my-auto">
+        {/* Compact 1-line Header */}
+        <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-100">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="h-7 w-7 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-xs shadow-2xs shrink-0">
+              {mode === 'UNLOCK' ? <Lock className="w-3.5 h-3.5" /> : 'V'}
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-slate-800 leading-tight">Velm</h1>
+              <p className="text-[11px] text-slate-500 leading-tight truncate">
+                {mode === 'UNLOCK'
+                  ? (studentDisplayName ? `Unlock ${studentDisplayName}` : 'Unlock session')
+                  : 'Connect Canvas LMS'}
+              </p>
+            </div>
           </div>
-          <h1 className="text-2xl font-bold text-slate-800">Velm - LMS UIEvent</h1>
-          <p className="text-slate-500 mt-2 text-sm">
-            {mode === 'UNLOCK' 
-              ? (studentDisplayName ? `Welcome back, ${studentDisplayName}! Unlock your session.` : 'Welcome back! Unlock your session.') 
-              : 'Connect your account to analyze data.'}
-          </p>
+          {mode === 'SETUP' && (savedStudents.length > 0 || storedData) && (
+            <div className="inline-flex bg-slate-100 p-0.5 rounded-md border border-slate-200/80 shrink-0 text-[11px] font-semibold">
+              {storedData && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('UNLOCK'); setLocalError(null); }}
+                  className="px-2 py-0.5 rounded transition cursor-pointer text-slate-500 hover:text-blue-600"
+                  title="Return to passphrase unlock"
+                >
+                  Unlock
+                </button>
+              )}
+              {savedStudents.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSetupTab('saved')}
+                    className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                      setupTab === 'saved'
+                        ? 'bg-white text-blue-600 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    Saved ({savedStudents.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSetupTab('new')}
+                    className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                      setupTab === 'new'
+                        ? 'bg-white text-blue-600 shadow-2xs'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    New
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {mode === 'UNLOCK' && (
+            <button
+              type="button"
+              onClick={() => {
+                setMode('SETUP');
+                setSetupTab(savedStudents.length > 0 ? 'saved' : 'new');
+                setLocalError(null);
+              }}
+              className="px-2 py-1 rounded-md text-[11px] font-semibold text-blue-600 hover:bg-blue-50 transition cursor-pointer shrink-0"
+              title="Sign in with saved profile or another Canvas account"
+            >
+              Other Accounts
+            </button>
+          )}
         </div>
 
         {/* Development Key Warning */}
         {mode === 'SETUP' && token === DEV_DEFAULT_KEY && token != "" && (
-           <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-3 items-start">
-              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-800">
-                <span className="font-bold block mb-1">Development Mode Warning</span>
-                A hardcoded API Key is currently pre-filled. Please remove this default value before deploying this application to a public environment.
-              </div>
+           <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg p-2 flex gap-2 items-center text-[11px] text-amber-800">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>Default development key pre-filled.</span>
            </div>
         )}
 
         {errorMessage && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-6 rounded-r">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <AlertTriangle className="h-5 w-5 text-red-400" />
-              </div>
-              <div className="ml-3 text-sm text-red-700 w-full">
-                {errorMessage}
-              </div>
-            </div>
+          <div className="bg-red-50 border-l-4 border-red-500 p-2 mb-2 rounded-r text-[11px] text-red-700 flex items-start gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+            <div>{errorMessage}</div>
           </div>
         )}
 
         {successMsg && (
-          <div className="bg-green-50 border-l-4 border-green-500 p-4 mb-6 rounded-r animate-fadeIn">
-            <p className="text-sm text-green-700">{successMsg}</p>
+          <div className="bg-green-50 border-l-4 border-green-500 p-2 mb-2 rounded-r text-[11px] text-green-700 animate-fadeIn">
+            {successMsg}
           </div>
         )}
 
         {mode === 'UNLOCK' && storedData ? (
           isChangingPass ? (
-            <form onSubmit={handleChangePassphraseSubmit} className="space-y-6 animate-fadeIn">
-               <div className="flex items-center mb-4">
+            <form onSubmit={handleChangePassphraseSubmit} className="space-y-2.5 animate-fadeIn">
+               <div className="flex items-center mb-1">
                  <button 
                    type="button" 
                    onClick={() => { setIsChangingPass(false); setLocalError(null); }}
-                   className="text-slate-400 hover:text-slate-600 transition"
+                   className="text-slate-400 hover:text-slate-600 transition cursor-pointer"
                    title="Go back"
                  >
-                   <ArrowLeft className="w-5 h-5" />
+                   <ArrowLeft className="w-4 h-4" />
                  </button>
-                 <span className="ml-2 font-semibold text-slate-700">Change Passphrase</span>
+                 <span className="ml-1.5 text-xs font-semibold text-slate-700">Change Passphrase</span>
                </div>
 
                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Current Passphrase</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Current Passphrase</label>
                   <input
                     type="password"
                     required
                     value={changeOldPass}
                     onChange={(e) => setChangeOldPass(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-xs focus:ring-1 focus:ring-blue-500 outline-none"
                     placeholder="Old passphrase"
                   />
                </div>
                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">New Passphrase</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">New Passphrase</label>
                   <input
                     type="password"
                     required
                     value={changeNewPass}
                     onChange={(e) => setChangeNewPass(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-md text-xs focus:ring-1 focus:ring-blue-500 outline-none"
                     placeholder="New passphrase"
                   />
                </div>
@@ -471,308 +523,313 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
                <button
                   type="submit"
                   disabled={processing}
-                  className="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-200 flex items-center justify-center disabled:opacity-70"
+                  className="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2 px-3 rounded-lg shadow-2xs transition flex items-center justify-center text-xs disabled:opacity-70 cursor-pointer"
                   title="Update your security passphrase"
                 >
-                  {(processing) ? <Loader2 className="animate-spin w-5 h-5 mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                  {(processing) ? <Loader2 className="animate-spin w-4 h-4 mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />}
                   Update Passphrase
                 </button>
             </form>
           ) : (
-            <form onSubmit={handleUnlockSubmit} className="space-y-6">
-               <div className="bg-blue-50/70 p-4 rounded-xl border border-blue-100 text-center">
-                 {studentDisplayName && (
-                   <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center mx-auto mb-2 shadow-2xs">
-                     {studentDisplayName.charAt(0).toUpperCase()}
-                   </div>
-                 )}
-                 <p className="text-xs text-slate-500 mb-0.5">Logging in {studentDisplayName ? `as ${studentDisplayName} to` : 'to'}</p>
-                 <p className="font-semibold text-blue-800 text-sm">{storedData.domain}</p>
+            <form onSubmit={handleUnlockSubmit} className="space-y-2.5">
+               <div className="bg-blue-50/70 px-2.5 py-2 rounded-lg border border-blue-100 flex items-center gap-2.5">
+                 <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                   {(studentDisplayName || storedData.domain || 'S').charAt(0).toUpperCase()}
+                 </div>
+                 <div className="min-w-0">
+                   {studentDisplayName && (
+                     <p className="text-xs font-bold text-slate-800 truncate leading-tight">{studentDisplayName}</p>
+                   )}
+                   <p className="font-medium text-blue-800 text-[11px] truncate leading-tight">{storedData.domain}</p>
+                 </div>
                </div>
 
                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Enter Passphrase</label>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Passphrase</label>
                   <div className="relative">
                     <input
                       type="password"
                       required
                       value={unlockPassphrase}
                       onChange={(e) => setUnlockPassphrase(e.target.value)}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
+                      className="w-full pl-2.5 pr-8 py-1.5 border border-slate-300 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
                       placeholder="••••••••"
                     />
-                    <KeyRound className="absolute right-3 top-2.5 w-5 h-5 text-slate-400" />
+                    <KeyRound className="absolute right-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
                   </div>
                </div>
 
                <button
                   type="submit"
                   disabled={loading || processing}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-200 flex items-center justify-center disabled:opacity-70"
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg shadow-2xs transition flex items-center justify-center text-xs disabled:opacity-70 cursor-pointer"
                   title="Unlock saved credentials"
                 >
-                  {(loading || processing) ? <Loader2 className="animate-spin w-5 h-5 mr-2" /> : <Unlock className="w-4 h-4 mr-2" />}
+                  {(loading || processing) ? <Loader2 className="animate-spin w-4 h-4 mr-1.5" /> : <Unlock className="w-3.5 h-3.5 mr-1.5" />}
                   {(loading || processing) ? 'Decrypting...' : 'Unlock & Login'}
                 </button>
 
-                <div className="flex justify-between pt-2">
+                <div className="flex justify-between items-center pt-0.5 gap-2">
                    <button 
                      type="button" 
-                     onClick={() => setIsChangingPass(true)}
-                     className="text-xs text-slate-500 hover:text-blue-600 flex items-center gap-1 transition"
+                     onClick={() => { setIsChangingPass(true); setConfirmClearSaved(false); }}
+                     className="text-[11px] text-slate-500 hover:text-blue-600 flex items-center gap-1 transition cursor-pointer"
                      title="Change the passphrase used to encrypt your token"
                    >
                      <RefreshCw className="w-3 h-3" /> Change Passphrase
                    </button>
                    
-                   <button 
-                     type="button" 
-                     onClick={clearSavedData}
-                     className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1 transition"
-                     title="Delete saved credentials from this browser"
-                   >
-                     <Trash2 className="w-3 h-3" /> Remove Saved Account
-                   </button>
+                   {confirmClearSaved ? (
+                     <div className="flex items-center gap-1.5">
+                       <button
+                         type="button"
+                         onClick={clearSavedData}
+                         className="px-2 py-0.5 rounded bg-red-600 hover:bg-red-700 text-white text-[11px] font-semibold transition cursor-pointer"
+                       >
+                         Confirm Remove
+                       </button>
+                       <button
+                         type="button"
+                         onClick={() => setConfirmClearSaved(false)}
+                         className="px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] font-medium transition cursor-pointer"
+                       >
+                         Cancel
+                       </button>
+                     </div>
+                   ) : (
+                     <button 
+                       type="button" 
+                       onClick={() => setConfirmClearSaved(true)}
+                       className="text-[11px] text-red-500 hover:text-red-700 flex items-center gap-1 transition cursor-pointer"
+                       title="Delete saved credentials from this browser"
+                     >
+                       <Trash2 className="w-3 h-3" /> Remove Account
+                     </button>
+                   )}
                 </div>
             </form>
           )
         ) : (
           <div>
-            {savedStudents.length > 0 && (
-              <div className="mb-6 bg-slate-50 border border-slate-200/90 rounded-2xl p-4 shadow-2xs">
-                <div className="flex items-center justify-between mb-2.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wide">
-                    <Users className="w-3.5 h-3.5 text-blue-600" />
-                    Saved Student Accounts
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-semibold bg-white border border-slate-200 px-2 py-0.5 rounded-full">
-                    {savedStudents.length} {savedStudents.length === 1 ? 'profile' : 'profiles'}
-                  </span>
-                </div>
-                <div className="space-y-2">
+            {savedStudents.length > 0 && setupTab === 'saved' ? (
+              <div className="space-y-2">
+                <div className="space-y-1.5 max-h-40 overflow-y-auto custom-scrollbar">
                   {savedStudents.map(student => (
                     <button
                       key={student.id}
                       type="button"
                       disabled={loading}
                       onClick={() => handleLoginWithSavedStudent(student)}
-                      className="w-full flex items-center justify-between p-2.5 bg-white border border-slate-200 hover:border-blue-400 hover:shadow-xs rounded-xl transition cursor-pointer text-left group"
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 bg-slate-50 border border-slate-200 hover:border-blue-400 hover:bg-white rounded-lg transition cursor-pointer text-left group"
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-7 h-7 rounded-lg bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-6 h-6 rounded-md bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
                           {student.name.charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-xs font-bold text-slate-800 truncate group-hover:text-blue-600">
+                          <div className="text-xs font-semibold text-slate-800 truncate group-hover:text-blue-600 leading-tight">
                             {student.name}
                           </div>
-                          <div className="text-[10px] text-slate-400 truncate">
+                          <div className="text-[10px] text-slate-400 truncate leading-tight">
                             {student.domain}
                           </div>
                         </div>
                       </div>
-                      <span className="text-xs font-semibold text-blue-600 flex items-center gap-0.5 shrink-0 ml-2">
+                      <span className="text-[11px] font-semibold text-blue-600 flex items-center shrink-0">
                         Sign In <ChevronRight className="w-3.5 h-3.5" />
                       </span>
                     </button>
                   ))}
                 </div>
-                <div className="mt-3 pt-2.5 border-t border-slate-200 text-[11px] text-slate-500 text-center font-medium">
-                  Or enter credentials below to connect another student:
-                </div>
-              </div>
-            )}
 
-            <form onSubmit={handleSetupSubmit} className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Student Name <span className="text-slate-400 font-normal text-xs">(optional - auto-detected if blank)</span>
-                </label>
-                <input
-                  type="text"
-                  value={studentName}
-                  onChange={(e) => setStudentName(e.target.value)}
-                  placeholder="e.g. Alex"
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-sm"
-                  title="Enter student name or nickname"
-                />
-              </div>
-
-              <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Canvas Domain</label>
-              <input
-                type="text"
-                required
-                value={domain}
-                onChange={(e) => setDomain(e.target.value)}
-                placeholder="canvas.instructure.com"
-                list="canvas-domains"
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                title="Enter your school's Canvas URL"
-              />
-              <datalist id="canvas-domains">
-                <option value="mcpsmd.instructure.com" />
-                <option value="canvas.instructure.com" />
-              </datalist>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                API Access Token
-                <a 
-                  href="https://community.canvaslms.com/t5/Student-Guide/How-do-I-manage-API-access-tokens-as-a-student/ta-p/273" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  className="float-right text-blue-600 text-xs flex items-center hover:underline"
-                  title="Open Canvas guide on generating tokens"
-                >
-                  How to get this? <ExternalLink className="w-3 h-3 ml-1" />
-                </a>
-              </label>
-              <input
-                type="password"
-                required
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Paste your generated token here"
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                title="Your personal Canvas API token"
-              />
-            </div>
-
-            {/* Advanced Options Zippy */}
-            <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
                 <button
-                    type="button"
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition text-sm font-medium text-slate-700"
-                    title="Toggle advanced connection settings"
+                  type="button"
+                  onClick={() => setSetupTab('new')}
+                  className="w-full py-1.5 px-3 rounded-lg border border-dashed border-slate-300 text-slate-600 hover:text-blue-600 hover:border-blue-300 text-xs font-medium transition cursor-pointer"
                 >
-                    Advanced Options
-                    {showAdvanced ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+                  + Connect Another Account
                 </button>
-                
-                {showAdvanced && (
-                    <div className="p-4 space-y-4 border-t border-slate-200 bg-slate-50 animate-fadeIn">
-                        <div className="flex items-start">
-                            <div className="flex items-center h-5">
+              </div>
+            ) : (
+              <form onSubmit={handleSetupSubmit} className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                      Student Name
+                    </label>
+                    <input
+                      type="text"
+                      value={studentName}
+                      onChange={(e) => setStudentName(e.target.value)}
+                      placeholder="e.g. Alex"
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 outline-hidden transition text-xs"
+                      title="Enter student name or nickname"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">Canvas Domain</label>
+                    <input
+                      type="text"
+                      required
+                      value={domain}
+                      onChange={(e) => setDomain(e.target.value)}
+                      placeholder="mcpsmd.instructure.com"
+                      list="canvas-domains"
+                      className="w-full px-2 py-1.5 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 outline-hidden transition text-xs"
+                      title="Enter your school's Canvas URL"
+                    />
+                    <datalist id="canvas-domains">
+                      <option value="mcpsmd.instructure.com" />
+                      <option value="canvas.instructure.com" />
+                    </datalist>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">
+                    API Access Token
+                    <a 
+                      href="https://community.canvaslms.com/t5/Student-Guide/How-do-I-manage-API-access-tokens-as-a-student/ta-p/273" 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="float-right text-blue-600 text-[10px] font-normal hover:underline"
+                      title="Open Canvas guide on generating tokens"
+                    >
+                      How to get token?
+                    </a>
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    placeholder="Paste Canvas access token..."
+                    className="w-full px-2 py-1.5 border border-slate-300 rounded-md focus:ring-1 focus:ring-blue-500 outline-hidden transition text-xs font-mono"
+                    title="Your personal Canvas API token"
+                  />
+                </div>
+
+                {/* Compact Advanced Options Zippy */}
+                <div className="border border-slate-200 rounded-md overflow-hidden bg-white">
+                  <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="w-full flex items-center justify-between px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 transition text-[11px] font-medium text-slate-600 cursor-pointer"
+                      title="Toggle advanced connection settings"
+                  >
+                      <span>Advanced Options</span>
+                      {showAdvanced ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                  </button>
+                  
+                  {showAdvanced && (
+                      <div className="p-2.5 space-y-2 border-t border-slate-200 bg-slate-50 animate-fadeIn text-xs">
+                          <label htmlFor="proxy" className="flex items-center justify-between gap-2 cursor-pointer">
+                            <span className="font-medium text-slate-700 text-[11px]">Use CORS Proxy</span>
                             <input
                                 id="proxy"
                                 type="checkbox"
                                 checked={useProxy}
                                 onChange={(e) => setUseProxy(e.target.checked)}
-                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                title="Enable to bypass CORS restrictions in the browser"
+                                className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                             />
-                            </div>
-                            <div className="ml-3 text-sm">
-                            <label htmlFor="proxy" className="font-medium text-slate-700" title="Enable to bypass CORS restrictions in the browser">Use CORS Proxy (Recommended)</label>
-                            <p className="text-slate-400 text-xs">Required for browsers.</p>
-                            </div>
-                        </div>
-              
-                        <div className="pt-3 border-t border-slate-200">
-                            <label className="block text-sm font-medium text-slate-700 mb-1">
-                                Concurrent Request Limit (Batch Size)
-                            </label>
-                            <input
-                                type="number"
-                                min="1"
-                                max="10"
-                                value={batchSize}
-                                onChange={(e) => setBatchSize(parseInt(e.target.value) || 2)}
-                                className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                                title="Limit simultaneous API requests to avoid rate limits"
-                            />
-                            <p className="text-xs text-slate-400 mt-1">Lower this if you encounter 403/429 errors.</p>
-                        </div>
+                          </label>
+                
+                          <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200/80">
+                              <label className="text-[11px] font-medium text-slate-700">Batch Limit</label>
+                              <input
+                                  type="number"
+                                  min="1"
+                                  max="10"
+                                  value={batchSize}
+                                  onChange={(e) => setBatchSize(parseInt(e.target.value) || 2)}
+                                  className="w-14 px-2 py-0.5 text-xs border border-slate-300 rounded focus:ring-1 focus:ring-blue-500 outline-none text-center bg-white"
+                                  title="Limit simultaneous API requests to avoid rate limits"
+                              />
+                          </div>
 
-                        <div className="border-t border-slate-200 pt-3">
-                            <div className="flex items-start">
-                                <div className="flex items-center h-5">
+                          <div className="border-t border-slate-200/80 pt-1.5 space-y-1.5">
+                              <label htmlFor="save" className="flex items-center justify-between gap-2 cursor-pointer">
+                                <span className="font-medium text-slate-700 text-[11px]">Save Encrypted Token</span>
                                 <input
                                     id="save"
                                     type="checkbox"
                                     checked={saveProfile}
                                     onChange={(e) => setSaveProfile(e.target.checked)}
-                                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                    title="Securely save token for next time"
+                                    className="w-3.5 h-3.5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                                 />
-                                </div>
-                                <div className="ml-3 text-sm">
-                                <label htmlFor="save" className="font-medium text-slate-700" title="Securely save token for next time">Save Encrypted Credential</label>
-                                </div>
-                            </div>
-                            
-                            {saveProfile && (
-                            <div className="mt-3 animate-fadeIn">
-                                <label className="block text-xs font-semibold text-slate-600 mb-1">Create a Passphrase</label>
+                              </label>
+                              
+                              {saveProfile && (
                                 <input
                                     type="password"
                                     required={saveProfile}
                                     value={newPassphrase}
                                     onChange={(e) => setNewPassphrase(e.target.value)}
-                                    placeholder="Secret passphrase to decrypt later"
-                                    className="w-full px-3 py-1.5 text-sm border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                                    placeholder="Passphrase to encrypt token"
+                                    className="w-full px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:ring-1 focus:ring-blue-500 outline-none"
                                     title="Passphrase used to encrypt your stored token"
                                 />
-                                <p className="text-xs text-slate-400 mt-1">Your token will be encrypted with this phrase.</p>
-                            </div>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
+                              )}
+                          </div>
+                      </div>
+                  )}
+                </div>
 
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={loading || processing}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition duration-200 flex items-center justify-center disabled:opacity-70"
-                title="Authenticate with Canvas"
-              >
-                {(loading || processing) ? <Loader2 className="animate-spin w-5 h-5 mr-2" /> : null}
-                {(loading || processing) ? 'Processing...' : 'Connect to Canvas'}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-        <div className="mt-6 text-center">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-300"></div>
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-slate-500">or</span>
-            </div>
+                <button
+                  type="submit"
+                  disabled={loading || processing}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-lg shadow-2xs transition flex items-center justify-center text-xs disabled:opacity-70 cursor-pointer"
+                  title="Authenticate with Canvas"
+                >
+                  {(loading || processing) ? <Loader2 className="animate-spin w-4 h-4 mr-1.5" /> : null}
+                  {(loading || processing) ? 'Connecting...' : 'Connect to Canvas'}
+                </button>
+              </form>
+            )}
           </div>
+        )}
 
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            <button
-              onClick={() => onLogin('', '', true, false, 2)}
-              disabled={loading}
-              className="w-full bg-white border border-slate-300 text-slate-700 font-medium py-2 px-2 rounded-lg hover:bg-slate-50 transition duration-200 text-sm"
-              title="Try with mock data"
-            >
-              Demo
-            </button>
-            <button
-              onClick={openBackup}
-              className="w-full bg-white border border-slate-300 text-slate-700 font-medium py-2 px-2 rounded-lg hover:bg-slate-50 transition duration-200 flex items-center justify-center gap-1 text-sm"
-              title="Manage backups"
-            >
-              <Archive className="w-3.5 h-3.5" /> Backup
-            </button>
-            <button
-              onClick={handleDebugClick}
-              className="w-full bg-white border border-slate-300 text-slate-700 font-medium py-2 px-2 rounded-lg hover:bg-slate-50 transition duration-200 flex items-center justify-center gap-1 text-sm"
-              title="Open API Debugger"
-            >
-              <Bug className="w-3.5 h-3.5" /> Debug
-            </button>
-          </div>
+        {mode !== 'BACKUP' && (
+          <label className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={staySignedIn}
+              onChange={(e) => setStaySignedIn(e.target.checked)}
+              className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+            />
+            <span>Auto-login next visit</span>
+          </label>
+        )}
+
+        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-center gap-3 text-[11px] text-slate-500">
+          <button
+            type="button"
+            onClick={() => onLogin('', '', true, false, 2)}
+            disabled={loading}
+            className="hover:text-blue-600 text-blue-600 transition cursor-pointer font-semibold"
+            title="Try with demo data"
+          >
+            Demo
+          </button>
+          <span className="text-slate-300">•</span>
+          <button
+            type="button"
+            onClick={openBackup}
+            className="hover:text-blue-600 flex items-center gap-1 transition cursor-pointer"
+            title="Manage backups"
+          >
+            <Archive className="w-3 h-3" /> Backup
+          </button>
+          <span className="text-slate-300">•</span>
+          <button
+            type="button"
+            onClick={handleDebugClick}
+            className="hover:text-blue-600 flex items-center gap-1 transition cursor-pointer"
+            title="Open API Debugger"
+          >
+            <Bug className="w-3 h-3" /> Debug
+          </button>
         </div>
       </div>
       

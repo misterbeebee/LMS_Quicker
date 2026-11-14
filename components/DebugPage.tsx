@@ -1,8 +1,14 @@
 
-import React, { useState } from 'react';
-import { ArrowLeft, Play, Wifi, AlertCircle, Bolt, ChevronRight, FolderOpen, Calendar, HelpCircle, FlaskConical, CheckCircle2, XCircle, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Play, Wifi, AlertCircle, Bolt, ChevronRight, FolderOpen, Calendar, HelpCircle, FlaskConical, CheckCircle2, XCircle, Check, Terminal, Trash2, Filter } from 'lucide-react';
 import { genericCanvasFetch, listSaveStates, SAVES_FOLDER, diagnoseCalendarEventsFetch } from '../services/canvas';
-import { logger } from '../services/logger';
+import { logger, LogEntry } from '../services/logger';
+
+declare const __APP_VERSION__: string;
+declare const __BUILD_TIMESTAMP__: string;
+
+const DEBUG_BUILD_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '1.8.0';
+const DEBUG_BUILD_TIMESTAMP = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : new Date().toISOString();
 
 interface DebugPageProps {
   initialDomain: string;
@@ -16,6 +22,7 @@ const PRESETS = [
     { name: "List Courses", method: "GET", endpoint: "/courses?enrollment_state=active" },
     { name: "List Enrollments", method: "GET", endpoint: "/users/self/enrollments" },
     { name: "Todo Items", method: "GET", endpoint: "/users/self/todo" },
+    { name: "Announcements (Replace ID)", method: "GET", endpoint: "/announcements?context_codes[]=course_12345&latest_only=false" },
     { name: "Upcoming Events (/users/self/upcoming_events)", method: "GET", endpoint: "/users/self/upcoming_events?per_page=100" },
     { name: "Calendar Events (Personal / All)", method: "GET", endpoint: "/calendar_events?type=event&all_events=true&per_page=100" },
     { name: "Calendar Events (60d Past to 1yr Future)", method: "GET", endpoint: `/calendar_events?type=event&start_date=${new Date(Date.now() - 60*86400000).toISOString().split('T')[0]}&end_date=${new Date(Date.now() + 365*86400000).toISOString().split('T')[0]}&per_page=100` },
@@ -35,6 +42,26 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // System Logs inside Debug Page
+  const [activeRightTab, setActiveRightTab] = useState<'response' | 'logs'>('response');
+  const [logs, setLogs] = useState<LogEntry[]>(() => logger.getLogs());
+  const [logFilter, setLogFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
+  const [logSearch, setLogSearch] = useState('');
+  const logScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const unsub = logger.subscribe((entry) => {
+      setLogs(prev => [...prev, entry]);
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (activeRightTab === 'logs' && logScrollRef.current) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
+  }, [logs, activeRightTab]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,16 +242,28 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
   return (
     <div className="h-screen bg-slate-50 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="bg-slate-900 text-white px-6 py-4 flex items-center gap-4 shadow-md shrink-0">
-        <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-full transition cursor-pointer" title="Return to previous screen">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Wifi className="w-5 h-5 text-blue-400" />
-            API Debugger & Diagnostics
-          </h1>
-          <p className="text-xs text-slate-400">Test Canvas LMS API endpoints and run automated verification suites</p>
+      <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4 shadow-md shrink-0 flex-wrap">
+        <div className="flex items-center gap-4 min-w-0">
+          <button onClick={onBack} className="p-2 hover:bg-slate-800 rounded-full transition cursor-pointer" title="Return to previous screen">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold flex items-center gap-2">
+              <Wifi className="w-5 h-5 text-blue-400 shrink-0" />
+              API Debugger &amp; Diagnostics
+            </h1>
+            <p className="text-xs text-slate-400 truncate">Test Canvas LMS API endpoints and run automated verification suites</p>
+          </div>
+        </div>
+        <div
+          data-testid="debug-build-info"
+          className="text-right font-mono text-[11px] bg-slate-800/90 border border-slate-700 rounded-lg px-3 py-1.5 text-slate-200 shrink-0"
+          title={`Build ISO timestamp: ${DEBUG_BUILD_TIMESTAMP}`}
+        >
+          <div className="font-bold text-blue-300">Build v{DEBUG_BUILD_VERSION}</div>
+          <div className="text-[10px] text-slate-400">
+            Built {new Date(DEBUG_BUILD_TIMESTAMP).toLocaleString()}
+          </div>
         </div>
       </div>
 
@@ -242,10 +281,10 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
                     onClick={handleRunTestSuite}
                     disabled={loading}
                     className="text-left text-xs p-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 transition border border-emerald-300 font-bold flex items-center gap-2 col-span-2 cursor-pointer shadow-2xs"
-                    title="Run the automated test suite (all 65 tests) directly in the app without AI chat"
+                    title="Run the automated integration test suite directly in the app"
                  >
                     <FlaskConical className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span className="truncate">Run Automated Test Suite (65 Tests)</span>
+                    <span className="truncate">Run Automated Test Suite (16 Suites)</span>
                  </button>
                  {PRESETS.map((p, i) => (
                     <button 
@@ -372,18 +411,60 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
            </div>
         </div>
 
-        {/* Right Panel: Response */}
+        {/* Right Panel: Response & System Logs */}
         <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
           <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center shrink-0">
-             <span className="text-xs font-mono text-slate-500 uppercase tracking-wider">Response Output</span>
-             {response && (
+             <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-lg">
+               <button
+                 type="button"
+                 onClick={() => setActiveRightTab('response')}
+                 className={`px-3 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${
+                   activeRightTab === 'response' 
+                     ? 'bg-white text-slate-800 shadow-2xs' 
+                     : 'text-slate-600 hover:text-slate-900'
+                 }`}
+               >
+                 Response & Tests
+               </button>
+               <button
+                 type="button"
+                 onClick={() => setActiveRightTab('logs')}
+                 className={`px-3 py-1 rounded-md text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer ${
+                   activeRightTab === 'logs' 
+                     ? 'bg-white text-slate-800 shadow-2xs' 
+                     : 'text-slate-600 hover:text-slate-900'
+                 }`}
+               >
+                 <Terminal className="w-3.5 h-3.5 text-slate-500" />
+                 <span>System Logs</span>
+                 <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full font-bold">
+                   {logs.length}
+                 </span>
+               </button>
+             </div>
+
+             {activeRightTab === 'response' && response && (
                <span className={`text-xs px-2 py-1 rounded font-bold ${response.status >= 200 && response.status < 300 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                  Status: {response.status} {response.statusText}
                </span>
              )}
+
+             {activeRightTab === 'logs' && (
+               <div className="flex items-center gap-2">
+                 <button
+                   type="button"
+                   onClick={() => { logger.clear(); setLogs([]); }}
+                   className="text-xs text-slate-500 hover:text-rose-600 flex items-center gap-1 px-2.5 py-1 hover:bg-slate-200 rounded transition cursor-pointer"
+                   title="Clear all recorded logs"
+                 >
+                   <Trash2 className="w-3.5 h-3.5" /> Clear Logs
+                 </button>
+               </div>
+             )}
           </div>
           
-          <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-700 custom-scrollbar">
+          {activeRightTab === 'response' ? (
+            <div className="flex-1 overflow-auto p-4 font-mono text-xs text-slate-700 custom-scrollbar">
              {loading && <div className="text-slate-500 animate-pulse">Waiting for response...</div>}
              
              {error && (
@@ -405,7 +486,7 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
                           {response.data.failed === 0 ? 'All Integration Tests Passed' : `${response.data.failed} Tests Failed`}
                         </h4>
                         <p className="text-xs text-slate-300">
-                          {response.data.passed} of {response.data.total} assertions passed across 7 test suites ({response.data.durationMs}ms)
+                          {response.data.passed} of {response.data.total} assertions passed across {new Set((response.data.results || []).map((r: any) => r.suite)).size} test suites ({response.data.durationMs}ms)
                         </p>
                       </div>
                     </div>
@@ -482,6 +563,71 @@ export const DebugPage: React.FC<DebugPageProps> = ({ initialDomain, initialToke
                </div>
              )}
           </div>
+        ) : (
+          <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+            <div className="p-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+              <div className="flex items-center gap-1">
+                {(['all', 'error', 'warn', 'info'] as const).map(lvl => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setLogFilter(lvl)}
+                    className={`px-2.5 py-1 rounded-md font-semibold capitalize transition cursor-pointer ${
+                      logFilter === lvl
+                        ? 'bg-slate-800 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {lvl} {lvl !== 'all' && `(${logs.filter(l => l.level === lvl).length})`}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                value={logSearch}
+                onChange={e => setLogSearch(e.target.value)}
+                placeholder="Filter logs..."
+                className="px-2.5 py-1 border border-slate-200 rounded-md text-xs bg-slate-50 focus:bg-white focus:outline-hidden"
+              />
+            </div>
+
+            <div className="flex-1 overflow-auto p-3 font-mono text-xs space-y-1 custom-scrollbar" ref={logScrollRef}>
+              {logs
+                .filter(l => logFilter === 'all' || l.level === logFilter)
+                .filter(l => !logSearch.trim() || l.message.toLowerCase().includes(logSearch.toLowerCase()) || (l.details && String(l.details).toLowerCase().includes(logSearch.toLowerCase())))
+                .map(log => (
+                  <div 
+                    key={log.id} 
+                    className="flex gap-2 items-start hover:bg-white p-1.5 rounded border border-transparent hover:border-slate-200 transition-colors"
+                  >
+                    <span className="text-slate-400 shrink-0 select-none text-[11px]">
+                      [{new Date(log.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}]
+                    </span>
+                    <span className={`shrink-0 font-bold uppercase text-[10px] px-1.5 py-0.2 rounded border ${
+                      log.level === 'error' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                      log.level === 'warn' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                      'bg-blue-50 text-blue-700 border-blue-200'
+                    }`}>
+                      {log.level}
+                    </span>
+                    <div className="flex-1 min-w-0 break-all">
+                      <span className={log.level === 'error' ? 'text-rose-700 font-semibold' : log.level === 'warn' ? 'text-amber-800' : 'text-slate-800'}>
+                        {log.message}
+                      </span>
+                      {log.details && (
+                        <pre className="text-slate-500 mt-1 pl-2 border-l-2 border-slate-300 text-[11px] whitespace-pre-wrap overflow-x-auto">
+                          {typeof log.details === 'object' ? JSON.stringify(log.details, null, 2) : String(log.details)}
+                        </pre>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              {logs.length === 0 && (
+                <div className="text-slate-400 italic p-8 text-center">No system logs recorded.</div>
+              )}
+            </div>
+          </div>
+        )}
         </div>
       </div>
     </div>

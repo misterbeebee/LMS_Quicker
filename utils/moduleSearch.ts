@@ -46,7 +46,37 @@ export function extractSearchTokens(title: string): {
 }
 
 /**
- * Proactively searches course modules for content related to a specific assignment
+ * Finds the parent/containing module in which an assignment is embedded
+ */
+export function findContainingModule(
+  assignment: CanvasAssignment,
+  modules: CanvasModule[] = []
+): CanvasModule | null {
+  if (!assignment || !modules || modules.length === 0) return null;
+
+  const targetName = (assignment.name || '').trim().toLowerCase();
+
+  for (const mod of modules) {
+    for (const item of (mod.items || [])) {
+      if (!item) continue;
+      // 1. Direct content_id match
+      if (item.content_id && item.content_id === assignment.id) {
+        return mod;
+      }
+      // 2. Direct title match if assignment item
+      if (item.title && item.title.trim().toLowerCase() === targetName && item.type === 'Assignment') {
+        return mod;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Proactively searches course modules for helpful study materials related to an assignment.
+ * Prioritizes the containing module's lessons, readings, and slide decks, while excluding
+ * redundant links to the assignment itself.
  */
 export function findRelatedModuleContent(
   assignment: CanvasAssignment,
@@ -57,11 +87,40 @@ export function findRelatedModuleContent(
   const { unitPatterns, keywords } = extractSearchTokens(assignment.name);
   const matches: RelatedModuleContentMatch[] = [];
   const seenItemKeys = new Set<string>();
+  const targetName = (assignment.name || '').trim().toLowerCase();
 
+  // 1. Find the containing module that holds this assignment
+  const containingModule = findContainingModule(assignment, modules);
+
+  // 2. If assignment belongs to a containing module, include all OTHER materials from that module (highest priority)
+  if (containingModule) {
+    const items = containingModule.items || [];
+    for (const item of items) {
+      if (!item || item.type === 'SubHeader') continue;
+
+      // Do NOT include self-reference to the assignment we are already looking at
+      const isSelf = (item.content_id && item.content_id === assignment.id) || 
+                     (item.title && item.title.trim().toLowerCase() === targetName && item.type === 'Assignment');
+      if (isSelf) continue;
+
+      const itemKey = `${containingModule.id}-${item.id}`;
+      seenItemKeys.add(itemKey);
+
+      matches.push({
+        module: containingModule,
+        item,
+        score: 95,
+        reason: `From containing module: ${containingModule.name}`
+      });
+    }
+  }
+
+  // 3. Search other modules for unit/chapter patterns and keyword matches
   for (const mod of modules) {
+    const isContaining = containingModule && mod.id === containingModule.id;
     const modTitleLower = (mod.name || '').toLowerCase();
 
-    // Check if the module itself matches a unit pattern
+    // Check if module title matches unit pattern
     let moduleUnitMatch = '';
     for (const pattern of unitPatterns) {
       if (modTitleLower.includes(pattern)) {
@@ -74,6 +133,11 @@ export function findRelatedModuleContent(
     for (const item of items) {
       if (!item || item.type === 'SubHeader') continue;
 
+      // Exclude self reference
+      const isSelf = (item.content_id && item.content_id === assignment.id) || 
+                     (item.title && item.title.trim().toLowerCase() === targetName && item.type === 'Assignment');
+      if (isSelf) continue;
+
       const itemKey = `${mod.id}-${item.id}`;
       if (seenItemKeys.has(itemKey)) continue;
 
@@ -81,20 +145,11 @@ export function findRelatedModuleContent(
       let score = 0;
       let reason = '';
 
-      // 1. Direct assignment match (100 pts)
-      if (
-        (item.content_id && item.content_id === assignment.id) ||
-        (item.title && assignment.name && itemTitleLower === assignment.name.trim().toLowerCase())
-      ) {
-        score = 100;
-        reason = 'Direct module assignment reference';
-      }
-      // 2. Direct unit/chapter match in same module (70 pts)
-      else if (moduleUnitMatch) {
+      if (moduleUnitMatch) {
         score = 70;
         reason = `From matching ${moduleUnitMatch.toUpperCase()} module`;
         
-        // Bonus if item title also shares keywords (+15)
+        // Bonus if item title also shares keywords
         for (const kw of keywords) {
           if (itemTitleLower.includes(kw)) {
             score += 15;
@@ -102,9 +157,7 @@ export function findRelatedModuleContent(
             break;
           }
         }
-      }
-      // 3. Keyword matches between item title and assignment title (30-60 pts)
-      else {
+      } else {
         let matchedKws: string[] = [];
         for (const kw of keywords) {
           if (itemTitleLower.includes(kw)) {

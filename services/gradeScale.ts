@@ -196,7 +196,8 @@ export const getGradeStyle = (
   let primaryRgb: [number, number, number] = [220, 38, 38];
   if (percentage >= greenMin) {
     // Green Tier: crisp emerald from [34, 197, 94] (greenMin) to deep forest [5, 150, 105] (100%)
-    const factor = Math.min(1, Math.max(0, (percentage - greenMin) / 10));
+    const span = Math.max(1, 100 - greenMin);
+    const factor = Math.min(1, Math.max(0, (percentage - greenMin) / span));
     primaryRgb = [
       Math.round(34 - factor * 29),
       Math.round(197 - factor * 47),
@@ -205,7 +206,8 @@ export const getGradeStyle = (
   } else if (percentage >= yellowMin) {
     // Yellow/Amber Tier: warm gold [245, 158, 11] (yellowMin) to [217, 119, 6] (greenMin - 0.1)
     // Notice: Never bleeds into green, maintaining a decisive color value gap against 90%
-    const factor = Math.min(1, Math.max(0, (percentage - yellowMin) / (greenMin - yellowMin)));
+    const span = Math.max(1, greenMin - yellowMin);
+    const factor = Math.min(1, Math.max(0, (percentage - yellowMin) / span));
     primaryRgb = [
       Math.round(245 - factor * 28),
       Math.round(158 - factor * 39),
@@ -214,7 +216,8 @@ export const getGradeStyle = (
   } else if (percentage >= orangeMin) {
     // Orange Tier: warm tangerine [249, 115, 22] to [234, 88, 12]
     // Notice: Decisive color value gap against 80% amber
-    const factor = Math.min(1, Math.max(0, (percentage - orangeMin) / (yellowMin - orangeMin)));
+    const span = Math.max(1, yellowMin - orangeMin);
+    const factor = Math.min(1, Math.max(0, (percentage - orangeMin) / span));
     primaryRgb = [
       Math.round(249 - factor * 15),
       Math.round(115 - factor * 27),
@@ -222,7 +225,8 @@ export const getGradeStyle = (
     ];
   } else {
     // Below orangeMin: Crimson Red
-    const factor = Math.min(1, Math.max(0, percentage / orangeMin));
+    const span = Math.max(1, orangeMin);
+    const factor = Math.min(1, Math.max(0, percentage / span));
     primaryRgb = [
       Math.round(185 + factor * 35),
       Math.round(28 + factor * 20),

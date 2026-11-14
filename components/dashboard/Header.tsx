@@ -1,15 +1,15 @@
 
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, StickyNote, Save, Loader2, FolderOpen, LayoutList, Kanban, Megaphone, Zap, Calendar, RefreshCw, ChevronDown, SlidersHorizontal, Settings, ExternalLink, User, Edit2 } from 'lucide-react';
+import { Download, StickyNote, Save, Loader2, FolderOpen, LayoutList, Kanban, Megaphone, Zap, Calendar, RefreshCw, ChevronDown, SlidersHorizontal, Settings, ExternalLink, Menu, Sliders, LogOut } from 'lucide-react';
 import { CourseData, ExportFormat, StudentProfile, CanvasCalendarEvent } from '../../types';
 import { downloadData } from '../../services/exporter';
 import { StudentSwitcher } from './StudentSwitcher';
 
 interface HeaderProps {
   selectedCourseName: string;
-  activeTab: 'overview' | 'assignments' | 'modules' | 'canvas_todo';
-  onTabChange: (tab: 'overview' | 'assignments' | 'modules' | 'canvas_todo') => void;
+  activeTab: 'overview' | 'assignments' | 'calendar' | 'modules';
+  onTabChange: (tab: 'overview' | 'assignments' | 'calendar' | 'modules') => void;
   // Assignment View Mode
   assignmentsViewMode: 'list' | 'board';
   onAssignmentsViewModeChange: (mode: 'list' | 'board') => void;
@@ -36,14 +36,15 @@ interface HeaderProps {
   onToggleShowCalendarEvents?: (val: boolean) => void;
   calendarEventsCount?: number;
   calendarEvents?: CanvasCalendarEvent[];
-  hidePastEvents?: boolean;
-  onToggleHidePastEvents?: (val: boolean) => void;
+  showPastEvents?: boolean;
+  onToggleShowPastEvents?: (val: boolean) => void;
   loadingCalendarEvents?: boolean;
   onRefreshCalendarEvents?: () => void;
   
   // Renamed from showManuallyHidden
   showArchived: boolean;
   onToggleShowArchived: (val: boolean) => void;
+  onResetFilters?: () => void;
   
   data: CourseData[];
   onToggleNotes: () => void;
@@ -57,6 +58,9 @@ interface HeaderProps {
   currentDomain?: string;
   onSwitchStudent?: (student: StudentProfile) => void;
   onRenameStudent?: (newName: string) => void;
+  onOpenMobileMenu?: () => void;
+  onOpenMobileSettings?: () => void;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -77,15 +81,16 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleShowClassAverages,
   showIds,
   onToggleShowIds,
-  showCalendarEvents = false,
+  showCalendarEvents = true,
   onToggleShowCalendarEvents,
   calendarEventsCount = 0,
-  hidePastEvents = false,
-  onToggleHidePastEvents,
+  showPastEvents = false,
+  onToggleShowPastEvents,
   loadingCalendarEvents = false,
   onRefreshCalendarEvents,
   showArchived,
   onToggleShowArchived,
+  onResetFilters,
   data,
   calendarEvents = [],
   onToggleNotes,
@@ -98,12 +103,13 @@ export const Header: React.FC<HeaderProps> = ({
   currentStudentName,
   currentDomain,
   onSwitchStudent,
-  onRenameStudent
+  onRenameStudent,
+  onOpenMobileMenu,
+  onOpenMobileSettings,
+  onLogout
 }) => {
   const [isDisplayMenuOpen, setIsDisplayMenuOpen] = useState(false);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
-  const [isEditingStudentName, setIsEditingStudentName] = useState(false);
-  const [editedStudentName, setEditedStudentName] = useState('');
 
   const displayMenuRef = useRef<HTMLDivElement>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -124,75 +130,54 @@ export const Header: React.FC<HeaderProps> = ({
 
   // Compute active count for badges in the popover trigger buttons
   const activeDisplayCount = (showScores ? 1 : 0) + (showClassAverages ? 1 : 0) + (showIds ? 1 : 0) + (showCalendarEvents ? 1 : 0);
-  const activeFilterCount = (showSubmitted ? 1 : 0) + (showArchived ? 1 : 0) + (showObsolete ? 1 : 0) + (showPastTerms ? 1 : 0);
+  const activeFilterCount = (showSubmitted ? 1 : 0) + (showArchived ? 1 : 0) + (showObsolete ? 1 : 0) + (showPastTerms ? 1 : 0) + (showPastEvents ? 1 : 0);
+  const totalActiveControls = activeDisplayCount + activeFilterCount;
 
   return (
-    <header className="bg-white border-b border-slate-200 min-h-16 flex flex-wrap items-center justify-between px-6 py-2 shrink-0 gap-3">
-      {/* Course Title and Student Info */}
-      <div className="flex items-center gap-3 min-w-0" data-tutorial="header-title">
-        <h1 className="text-lg font-semibold text-slate-800 truncate flex items-center gap-2 max-w-xs md:max-w-md lg:max-w-lg" title={selectedCourseName}>
-          {selectedCourseName}
-        </h1>
+    <header className="bg-white border-b border-slate-200 min-h-14 flex items-center justify-between px-3 sm:px-6 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shrink-0 gap-2 md:gap-4 relative z-30 shadow-2xs">
+      {/* Top Left: Mobile Menu + Merged Student Controller (mobile) / App Brand (desktop) */}
+      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0" data-tutorial="header-brand">
+        {/* Mobile Sidebar Hamburger Toggle */}
+        <button
+          type="button"
+          onClick={onOpenMobileMenu}
+          className="md:hidden p-1.5 -ml-1 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition shrink-0"
+          title="Open courses menu"
+          aria-label="Open course menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
 
-        {/* Clickable / Editable Student Name */}
-        {isEditingStudentName ? (
-          <form 
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (editedStudentName.trim() && onRenameStudent) {
-                onRenameStudent(editedStudentName.trim());
-              }
-              setIsEditingStudentName(false);
-            }}
-            className="inline-flex items-center gap-1 shrink-0"
-          >
-            <input
-              type="text"
-              value={editedStudentName}
-              onChange={(e) => setEditedStudentName(e.target.value)}
-              autoFocus
-              className="px-2 py-0.5 text-xs font-semibold border border-blue-400 rounded-md focus:ring-1 focus:ring-blue-500 outline-none w-32 bg-white"
-              placeholder="Student name"
+        <div className="hidden md:flex items-center gap-2">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs sm:text-sm shadow-2xs">
+            V
+          </div>
+          <span className="font-bold text-sm sm:text-base tracking-tight text-slate-900">
+            Velm
+          </span>
+        </div>
+
+        {/* Merged Top-Left Student Controller on Mobile */}
+        {onSwitchStudent && (
+          <div className="md:hidden">
+            <StudentSwitcher
+              currentStudentId={currentStudentId}
+              currentStudentName={currentStudentName}
+              currentDomain={currentDomain}
+              onSwitchStudent={onSwitchStudent}
+              onRenameStudent={onRenameStudent}
             />
-            <button 
-              type="submit" 
-              className="px-2 py-0.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-[10px] font-bold shadow-2xs cursor-pointer"
-            >
-              Save
-            </button>
-            <button 
-              type="button" 
-              onClick={() => setIsEditingStudentName(false)} 
-              className="px-1.5 py-0.5 text-slate-400 hover:text-slate-600 text-[10px] font-bold cursor-pointer"
-            >
-              ✕
-            </button>
-          </form>
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setEditedStudentName(currentStudentName || '');
-              setIsEditingStudentName(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 hover:bg-slate-200/90 text-xs font-semibold text-slate-700 transition cursor-pointer group shadow-2xs border border-slate-200/60 shrink-0"
-            title="Click to rename student profile"
-          >
-            <User className="w-3.5 h-3.5 text-blue-600" />
-            <span className="truncate max-w-[130px]">{currentStudentName || 'Set Student Name'}</span>
-            <Edit2 className="w-2.5 h-2.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </button>
+          </div>
         )}
       </div>
 
-      {/* Primary & Contextual Controls */}
-      <div className="flex items-center flex-wrap gap-2.5">
-        {/* Navigation Tabs */}
-        <div className="flex bg-slate-100 rounded-lg p-1 shrink-0" data-tutorial="nav-tabs-group">
+      {/* Variable Center: Primary Navigation Tabs (horizontally scrollable on small screens) */}
+      <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full justify-center flex-1 py-0.5 custom-scrollbar" data-tutorial="nav-tabs-group">
+        <div className="flex bg-slate-100 rounded-lg p-0.5 shrink-0 overflow-x-auto">
           <button 
             data-tutorial="nav-tab-overview"
             onClick={() => onTabChange('overview')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${activeTab === 'overview' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-md transition cursor-pointer shrink-0 ${activeTab === 'overview' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
             title="Switch to Overview"
           >
             Overview
@@ -200,15 +185,23 @@ export const Header: React.FC<HeaderProps> = ({
           <button 
             data-tutorial="nav-tab-assignments"
             onClick={() => onTabChange('assignments')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${activeTab === 'assignments' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-md transition cursor-pointer shrink-0 ${activeTab === 'assignments' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
             title="Switch to Assignments view"
           >
             Assignments
           </button>
           <button 
+            data-tutorial="nav-tab-calendar"
+            onClick={() => onTabChange('calendar')}
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-md transition cursor-pointer shrink-0 ${activeTab === 'calendar' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
+            title="Switch to Calendar view"
+          >
+            Calendar
+          </button>
+          <button 
             data-tutorial="nav-tab-modules"
             onClick={() => onTabChange('modules')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${activeTab === 'modules' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
+            className={`px-2.5 sm:px-3 py-1 sm:py-1.5 text-xs font-semibold rounded-md transition cursor-pointer shrink-0 ${activeTab === 'modules' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-600 hover:text-slate-900'}`}
             title="Switch to Modules view"
           >
             Modules
@@ -220,23 +213,56 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex bg-slate-100 rounded-lg p-0.5 shrink-0" data-tutorial="view-mode-toggle">
             <button
               onClick={() => onAssignmentsViewModeChange('list')}
-              className={`p-1.5 rounded transition cursor-pointer ${assignmentsViewMode === 'list' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+              className={`p-1 sm:p-1.5 rounded transition cursor-pointer ${assignmentsViewMode === 'list' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
               title="List View"
             >
-              <LayoutList className="w-4 h-4" />
+              <LayoutList className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
             <button
               onClick={() => onAssignmentsViewModeChange('board')}
-              className={`p-1.5 rounded transition cursor-pointer ${assignmentsViewMode === 'board' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+              className={`p-1 sm:p-1.5 rounded transition cursor-pointer ${assignmentsViewMode === 'board' ? 'bg-white shadow-xs text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
               title="Board View"
             >
-              <Kanban className="w-4 h-4" />
+              <Kanban className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
           </div>
         )}
+      </div>
 
-        {/* Compact Popover: Display Options */}
-        <div className="relative shrink-0" ref={displayMenuRef} data-tutorial="btn-display-popover">
+      {/* Top Right: Global Controls */}
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+
+        {/* Mobile-only All-Settings Drawer Button */}
+        <div className="flex md:hidden items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenMobileSettings}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 transition"
+            title="Open view filters and options"
+          >
+            <Sliders className="w-3.5 h-3.5 text-blue-600" />
+            {totalActiveControls > 0 && (
+              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-blue-600 text-white rounded-full">
+                {totalActiveControls}
+              </span>
+            )}
+          </button>
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+              title="Log Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Desktop-only Control Panels and Action Buttons */}
+        <div className="hidden md:flex items-center gap-2">
+          {/* Compact Popover: Display Options */}
+          <div className="relative shrink-0" ref={displayMenuRef} data-tutorial="btn-display-popover">
           <button
             type="button"
             onClick={() => setIsDisplayMenuOpen(!isDisplayMenuOpen)}
@@ -337,19 +363,6 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                   </button>
                 )}
-
-                {showCalendarEvents && onToggleHidePastEvents && (
-                  <button
-                    type="button"
-                    onClick={() => onToggleHidePastEvents(!hidePastEvents)}
-                    className="w-full flex items-center justify-between px-2.5 py-1 text-xs rounded-lg hover:bg-slate-50 transition cursor-pointer pl-6"
-                  >
-                    <span className="text-slate-600 text-[11px]">Hide Past Events</span>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${hidePastEvents ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                      {hidePastEvents ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
-                )}
               </div>
             </div>
           )}
@@ -377,9 +390,21 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
 
           {isFilterMenuOpen && (
-            <div className="absolute right-0 mt-1.5 w-56 bg-white rounded-xl shadow-xl border border-slate-200 p-2 z-50 animate-fadeIn space-y-1">
-              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Filter Assignments
+            <div className="absolute right-0 mt-1.5 w-60 bg-white rounded-xl shadow-xl border border-slate-200 p-2 z-50 animate-fadeIn space-y-1">
+              <div className="px-2 py-1 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  Assignments &amp; Terms
+                </span>
+                {onResetFilters && activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={onResetFilters}
+                    className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                    title="Reset all filters back to default (Hidden)"
+                  >
+                    Reset Defaults
+                  </button>
+                )}
               </div>
 
               <button
@@ -425,6 +450,30 @@ export const Header: React.FC<HeaderProps> = ({
                   {showPastTerms ? 'Shown' : 'Hidden'}
                 </span>
               </button>
+
+              {onToggleShowPastEvents && (
+                <div
+                  data-testid="filter-calendar-section"
+                  className="pt-1.5 mt-1 border-t border-slate-100 space-y-1"
+                >
+                  <div className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Calendar className="w-3 h-3 text-purple-600" />
+                      <span>Calendar</span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onToggleShowPastEvents(!showPastEvents)}
+                    className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <span className="text-slate-700 font-medium">Show Past Events</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${showPastEvents ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      {showPastEvents ? 'Shown' : 'Hidden'}
+                    </span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -490,6 +539,20 @@ export const Header: React.FC<HeaderProps> = ({
             <button onClick={() => downloadData(data, ExportFormat.CSV)} className="block w-full text-left px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50" title="Download as CSV">Export CSV</button>
             <button onClick={() => downloadData(data, ExportFormat.XML)} className="block w-full text-left px-3.5 py-2 text-xs text-slate-700 hover:bg-slate-50" title="Download as XML">Export XML</button>
           </div>
+        </div>
+
+        {/* Desktop Log Out Button */}
+        {onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition cursor-pointer shrink-0"
+            title="Log Out of Velm"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Log Out</span>
+          </button>
+        )}
         </div>
       </div>
     </header>

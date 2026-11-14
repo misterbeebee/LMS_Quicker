@@ -1,8 +1,11 @@
 
 
-import { CanvasCourse, CanvasAssignment, CanvasAssignmentDetail, CanvasModule, CanvasEnrollment, CourseData, CanvasTodoItem, CanvasCalendarEvent } from '../types';
+import { CanvasCourse, CanvasAssignment, CanvasAssignmentDetail, CanvasModule, CanvasEnrollment, CourseData, CanvasTodoItem, CanvasCalendarEvent, CanvasAnnouncement, CanvasAssignmentGroup, CourseGradeDiagnosticsResult } from '../types';
 import { logger } from './logger';
 import { getActiveStudent } from './students';
+import { sanitizeCanvasDomain, sanitizeCanvasToken, getCalendarEventWebUrl } from '../utils/canvasUrls';
+import { selectPrimaryEnrollment } from '../utils/gradeInspector';
+export { sanitizeCanvasDomain, sanitizeCanvasToken };
 
 const MOCK_DELAY = 1500;
 const NOTES_FILENAME = 'canvas_app_notes.txt';
@@ -19,7 +22,7 @@ const MOCK_COURSES: CourseData[] = [
       course_code: "CS101", 
       sis_course_id: "CS101_FALL24",
       is_favorite: true,
-      term: { id: 1, name: "Fall 2024" }
+      term: { id: 1, name: "Fall 2026" }
     },
     assignments: [
       { 
@@ -65,7 +68,7 @@ const MOCK_COURSES: CourseData[] = [
       course_code: "MATH201",
       sis_course_id: "MATH201_FALL24",
       is_favorite: true,
-      term: { id: 1, name: "Fall 2024" }
+      term: { id: 1, name: "Fall 2026" }
     },
     assignments: [
       { 
@@ -108,7 +111,7 @@ const MOCK_COURSES: CourseData[] = [
       course_code: "ART150",
       sis_course_id: null,
       is_favorite: false,
-      term: { id: 1, name: "Fall 2024" }
+      term: { id: 1, name: "Fall 2026" }
     },
     assignments: [
       { 
@@ -139,7 +142,7 @@ const MOCK_COURSES: CourseData[] = [
       course_code: "SPAN301",
       sis_course_id: "SPAN301_FALL24",
       is_favorite: true,
-      term: { id: 1, name: "Fall 2024" }
+      term: { id: 1, name: "Fall 2026" }
     },
     assignments: [
       {
@@ -179,11 +182,42 @@ const MOCK_COURSES: CourseData[] = [
         ]
       }
     ],
-    enrollment: {
+      enrollment: {
       id: 4,
       course_id: 104,
       type: "StudentEnrollment",
       grades: { current_score: 91.0, current_grade: "A-", final_score: 91.0, final_grade: "A-" }
+    }
+  },
+  {
+    course: {
+      id: 105,
+      name: "World History: Modern Era",
+      course_code: "HIST210",
+      sis_course_id: "HIST210_SPR25",
+      is_favorite: true,
+      term: { id: 2, name: "Spring 2025", end_at: "2025-06-15T23:59:59Z" }
+    },
+    assignments: [
+      {
+        id: 9,
+        name: "Research Paper: Industrial Revolution",
+        description: "Primary source synthesis paper",
+        due_at: "2025-05-12T23:59:59Z",
+        points_possible: 100,
+        course_id: 105,
+        html_url: "#",
+        submission: { submitted_at: "2025-05-11T19:00:00Z", grade: "94", score: 94 },
+        locked_for_user: false,
+        submission_types: ['online_upload']
+      }
+    ],
+    modules: [],
+    enrollment: {
+      id: 5,
+      course_id: 105,
+      type: "StudentEnrollment",
+      grades: { current_score: 94.0, current_grade: "A", final_score: 94.0, final_grade: "A" }
     }
   }
 ];
@@ -221,7 +255,9 @@ export const toCorsProxyUrl = (targetUrl: string, _optionalKey?: string): string
 
 // Helper for building proxied URLs
 const buildUrl = (domain: string, path: string, useProxy: boolean, params: Record<string, any> = {}) => {
-  const baseUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+  const cleanHost = sanitizeCanvasDomain(domain);
+  const rawBase = cleanHost || domain.trim();
+  const baseUrl = rawBase.startsWith('http') ? rawBase : `https://${rawBase}`;
   const cleanUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
   let targetUrl = `${cleanUrl}${path}`;
   
@@ -247,8 +283,11 @@ export const genericCanvasFetch = async (
   method: string = 'GET',
   body?: any
 ): Promise<any> => {
-  const baseUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+  const cleanHost = sanitizeCanvasDomain(domain);
+  const rawBase = cleanHost || domain.trim();
+  const baseUrl = rawBase.startsWith('http') ? rawBase : `https://${rawBase}`;
   const cleanUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const authToken = sanitizeCanvasToken(token);
   
   // Determine if endpoint is absolute or relative
   let targetUrl = endpoint;
@@ -272,7 +311,7 @@ export const genericCanvasFetch = async (
   const options: RequestInit = {
     method: method,
     headers: {
-      'Authorization': `Bearer ${token.trim()}`,
+      'Authorization': `Bearer ${authToken}`,
       'Accept': 'application/json',
       'Content-Type': 'application/json',
     },
@@ -330,34 +369,63 @@ const parseSafeJson = async (res: Response, endpointDescription: string = 'API r
   }
 };
 
-// User ID cache to avoid repeated profile requests and prevent network/storage errors
-let memoryCachedUserId: string | null = null;
+// User ID cache scoped by credential (domain + short token digest) to isolate multi-student sessions
+const memoryCachedUserIds = new Map<string, string>();
+const USER_ID_CACHE_PREFIX = 'canvas_quicker_user_id';
 
-export const setCachedUserId = (id: string | number) => {
-  if (id) {
-    memoryCachedUserId = String(id);
-    try {
-      localStorage.setItem('canvas_quicker_user_id', String(id));
-    } catch {}
+const computeTokenFingerprint = (token?: string): string => {
+  const clean = sanitizeCanvasToken(token);
+  if (!clean) return 'anon';
+  let hash = 5381;
+  for (let i = 0; i < clean.length; i++) {
+    hash = ((hash << 5) + hash) + clean.charCodeAt(i);
+    hash = hash & hash;
   }
+  return Math.abs(hash).toString(36);
 };
 
-export const getCachedUserId = (): string | null => {
-  if (memoryCachedUserId) return memoryCachedUserId;
+export const getCredentialScopeKey = (domain?: string, token?: string): string => {
+  const cleanDomain = sanitizeCanvasDomain(domain);
+  const cleanToken = sanitizeCanvasToken(token);
+  if (!cleanDomain && !cleanToken) return 'default';
+  return `${cleanDomain || 'default'}:${computeTokenFingerprint(cleanToken)}`;
+};
+
+export const setCachedUserId = (id: string | number, domain?: string, token?: string) => {
+  if (!id) return;
+  const idStr = String(id);
+  const scope = getCredentialScopeKey(domain, token);
+  memoryCachedUserIds.set(scope, idStr);
   try {
-    const stored = localStorage.getItem('canvas_quicker_user_id');
+    const storageKey = scope === 'default' ? USER_ID_CACHE_PREFIX : `${USER_ID_CACHE_PREFIX}:${scope}`;
+    localStorage.setItem(storageKey, idStr);
+  } catch {}
+};
+
+export const getCachedUserId = (domain?: string, token?: string): string | null => {
+  const scope = getCredentialScopeKey(domain, token);
+  const inMemory = memoryCachedUserIds.get(scope);
+  if (inMemory) return inMemory;
+  try {
+    const storageKey = scope === 'default' ? USER_ID_CACHE_PREFIX : `${USER_ID_CACHE_PREFIX}:${scope}`;
+    const stored = localStorage.getItem(storageKey);
     if (stored) {
-      memoryCachedUserId = stored;
+      memoryCachedUserIds.set(scope, stored);
       return stored;
     }
   } catch {}
   return null;
 };
 
+export const clearCanvasMemoryCaches = (): void => {
+  memoryCachedUserIds.clear();
+  assignmentDetailsCache.clear();
+};
+
 // Get User ID for storage separation with multi-tier fallback and safe recovery
 const getUserId = async (domain: string, token: string, useProxy: boolean): Promise<string> => {
-    // 1. Check in-memory / localStorage cache first
-    const cached = getCachedUserId();
+    // 1. Check credential-scoped in-memory / localStorage cache first
+    const cached = getCachedUserId(domain, token);
     if (cached) {
         return cached;
     }
@@ -367,7 +435,7 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
         const selfUrl = buildUrl(domain, '/api/v1/users/self', useProxy);
         const res = await fetch(selfUrl, { 
             headers: { 
-                'Authorization': `Bearer ${token.trim()}`,
+                'Authorization': `Bearer ${sanitizeCanvasToken(token)}`,
                 'Accept': 'application/json'
             }
         });
@@ -375,7 +443,7 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
             const data = await parseSafeJson(res, 'User Self');
             if (data?.id) {
                 const idStr = String(data.id);
-                setCachedUserId(idStr);
+                setCachedUserId(idStr, domain, token);
                 return idStr;
             }
         }
@@ -388,7 +456,7 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
         const profileUrl = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
         const res = await fetch(profileUrl, { 
             headers: { 
-                'Authorization': `Bearer ${token.trim()}`,
+                'Authorization': `Bearer ${sanitizeCanvasToken(token)}`,
                 'Accept': 'application/json'
             }
         });
@@ -396,7 +464,7 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
             const data = await parseSafeJson(res, 'User Profile');
             if (data?.id) {
                 const idStr = String(data.id);
-                setCachedUserId(idStr);
+                setCachedUserId(idStr, domain, token);
                 return idStr;
             }
         }
@@ -407,74 +475,67 @@ const getUserId = async (domain: string, token: string, useProxy: boolean): Prom
     // 4. Try genericCanvasFetch (which has automatic fallback logic from direct to internal proxy)
     try {
         const res = await genericCanvasFetch(domain, token, '/users/self', useProxy);
-        if (res?.id) {
-            const idStr = String(res.id);
-            setCachedUserId(idStr);
+        const resolvedId = res?.data?.id ?? res?.id;
+        if (resolvedId) {
+            const idStr = String(resolvedId);
+            setCachedUserId(idStr, domain, token);
             return idStr;
         }
     } catch (e: any) {
         logger.warn("Generic canvas fetch for user self failed:", e?.message);
     }
 
-    // 5. Check if active student profile ID exists in students service
+    // 5. Safe deterministic fallback: derive unique hash from domain and token
+    // This guarantees remote autosave and directory hashing NEVER throw an unhandled error or cross student buckets
     try {
-        const activeStudent = getActiveStudent();
-        if (activeStudent?.id) {
-            setCachedUserId(activeStudent.id);
-            return activeStudent.id;
-        }
-    } catch {}
-
-    // 6. Safe deterministic fallback: derive unique hash from domain and token
-    // This guarantees remote autosave and directory hashing NEVER throw an unhandled error
-    try {
-        const cleanDomain = domain.replace(/https?:\/\//, '').replace(/\/$/, '');
-        const tokenSnippet = token.trim().slice(-20);
+        const cleanDomain = sanitizeCanvasDomain(domain) || domain.replace(/https?:\/\//, '').replace(/\/$/, '');
+        const tokenSnippet = sanitizeCanvasToken(token).slice(-20);
         const fallbackSeed = `${cleanDomain}:${tokenSnippet}`;
         const fallbackHash = await generateHashCode(APP_SEED, fallbackSeed);
         const fallbackId = `user_${fallbackHash.substring(0, 12)}`;
         logger.info(`Using deterministic fallback user identifier: ${fallbackId}`);
-        setCachedUserId(fallbackId);
+        setCachedUserId(fallbackId, domain, token);
         return fallbackId;
     } catch {
         return 'user_default';
     }
 };
 
+import { extractStudentFirstName } from '../utils/dashboard-helpers';
+
 /**
  * Fetch the logged-in student's real display name from Canvas (/api/v1/users/self)
+ * Applies heuristics to extract a clean first name / nickname (e.g. from "LastName, FirstName (Student)")
  */
 export const fetchStudentName = async (domain: string, token: string, useProxy: boolean): Promise<string | null> => {
     try {
         // Universal /api/v1/users/self first
         const selfUrl = buildUrl(domain, '/api/v1/users/self', useProxy);
-        const selfRes = await fetch(selfUrl, { headers: { 'Authorization': `Bearer ${token.trim()}`, 'Accept': 'application/json' }});
+        const selfRes = await fetch(selfUrl, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}`, 'Accept': 'application/json' }});
         if (selfRes.ok) {
             const selfData = await parseSafeJson(selfRes, 'User Self');
             if (selfData?.id) {
-                setCachedUserId(selfData.id);
+                setCachedUserId(selfData.id, domain, token);
             }
-            if (selfData?.name && typeof selfData.name === 'string' && selfData.name.trim()) {
-                return selfData.name.trim();
-            }
-            if (selfData?.short_name && typeof selfData.short_name === 'string' && selfData.short_name.trim()) {
-                return selfData.short_name.trim();
+            const raw = selfData?.short_name || selfData?.name;
+            if (raw && typeof raw === 'string' && raw.trim()) {
+                const extracted = extractStudentFirstName(raw);
+                return extracted || raw.trim();
             }
         }
 
         // Fallback to /api/v1/users/self/profile
         const url = buildUrl(domain, '/api/v1/users/self/profile', useProxy);
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token.trim()}`, 'Accept': 'application/json' }});
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}`, 'Accept': 'application/json' }});
         if (res.ok) {
             const data = await parseSafeJson(res, 'User Profile');
             if (data?.id) {
-                setCachedUserId(data.id);
+                setCachedUserId(data.id, domain, token);
             }
-            if (data?.name && typeof data.name === 'string' && data.name.trim()) {
-                return data.name.trim();
-            }
-            if (data?.short_name && typeof data.short_name === 'string' && data.short_name.trim()) {
-                return data.short_name.trim();
+            const raw = data?.short_name || data?.name;
+            if (raw && typeof raw === 'string' && raw.trim()) {
+                const extracted = extractStudentFirstName(raw);
+                return extracted || raw.trim();
             }
         }
     } catch (e: any) {
@@ -500,7 +561,7 @@ const ensureFolderExists = async (domain: string, token: string, folderName: str
     
     try {
         const res = await fetch(findUrl, {
-            headers: { 'Authorization': `Bearer ${token.trim()}` }
+            headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` }
         });
         if (res.ok) {
              const data = await parseSafeJson(res, 'folder search');
@@ -529,7 +590,7 @@ const ensureFolderExists = async (domain: string, token: string, folderName: str
     try {
         const createRes = await fetch(createUrl, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${token.trim()}` },
+            headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` },
             body: params
         });
         
@@ -589,7 +650,7 @@ export const saveFileToCanvas = async (
       const initResponse = await fetch(initUrl, {
           method: 'POST',
           headers: {
-              'Authorization': `Bearer ${token.trim()}`,
+              'Authorization': `Bearer ${sanitizeCanvasToken(token)}`,
           },
           body: formData,
           keepalive: isBackground
@@ -668,7 +729,7 @@ export const getFileFromCanvas = async (
         // Step 2: Get Folder Details (to find the files list URL)
         // Add cache-busting timestamp
         const folderUrl = buildUrl(domain, `/api/v1/users/self/folders/by_path${storagePath}`, useProxy, { _t: Date.now() });
-        const folderRes = await fetch(folderUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        const folderRes = await fetch(folderUrl, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` }});
         
         if (!folderRes.ok) {
             logger.info("No storage folder found.");
@@ -703,7 +764,7 @@ export const getFileFromCanvas = async (
 
         // Step 3: List files in the folder
         const listUrl = useProxy ? toCorsProxyUrl(filesUrl) : filesUrl;
-        const listRes = await fetch(listUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        const listRes = await fetch(listUrl, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` }});
         
         if (!listRes.ok) throw new Error("Failed to list files in storage folder");
         
@@ -739,7 +800,7 @@ export const downloadRawFile = async (downloadUrl: string, token: string, usePro
     
     let headers: Record<string, string> = {};
     if (shouldSendAuth) {
-            headers['Authorization'] = `Bearer ${token.trim()}`;
+            headers['Authorization'] = `Bearer ${sanitizeCanvasToken(token)}`;
     }
     
     // Attempt 1: Direct Download (regardless of useProxy)
@@ -801,7 +862,7 @@ export const listSaveStates = async (
         // 2. Get Folder
         // Add cache busting timestamp
         const folderUrl = buildUrl(domain, `/api/v1/users/self/folders/by_path${storagePath}`, useProxy, { _t: Date.now() });
-        const folderRes = await fetch(folderUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        const folderRes = await fetch(folderUrl, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` }});
         
         if (!folderRes.ok) return [];
         
@@ -833,7 +894,7 @@ export const listSaveStates = async (
            ? toCorsProxyUrl(targetListUrl) 
            : targetListUrl;
            
-        const listRes = await fetch(listUrl, { headers: { 'Authorization': `Bearer ${token.trim()}` }});
+        const listRes = await fetch(listUrl, { headers: { 'Authorization': `Bearer ${sanitizeCanvasToken(token)}` }});
 
         if (!listRes.ok) return [];
         
@@ -878,11 +939,22 @@ export const getNoteFromCanvas = async (domain: string, token: string, useProxy:
 };
 
 export const fetchCanvasData = async (domain: string, token: string, useProxy: boolean = false, batchSize: number = 2): Promise<CourseData[]> => {
-  logger.info(`Starting Canvas API connection to ${domain} (Proxy: ${useProxy}, Batch: ${batchSize})`);
+  const cleanDomain = sanitizeCanvasDomain(domain);
+  const cleanToken = sanitizeCanvasToken(token);
+
+  if (cleanDomain.toUpperCase() === 'DEMO' || cleanToken.toUpperCase() === 'DEMO') {
+    return fetchMockData();
+  }
+
+  if (!cleanDomain || !cleanToken) {
+    throw new Error("Missing Canvas domain or API access token. Please check your credentials.");
+  }
+
+  logger.info(`Starting Canvas API connection to ${cleanDomain} (Proxy: ${useProxy}, Batch: ${batchSize})`);
 
   // Helper to handle fetch with auth headers and pagination
   const fetchPage = async (endpoint: string, page: number = 1) => {
-    const targetUrl = buildUrl(domain, `/api/v1${endpoint}`, useProxy, {
+    const targetUrl = buildUrl(cleanDomain, `/api/v1${endpoint}`, useProxy, {
         per_page: 100,
         page: page
     });
@@ -891,15 +963,14 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
     try {
       response = await fetch(targetUrl, {
         headers: {
-          // Trim token to ensure no whitespace issues cause 401
-          'Authorization': `Bearer ${token.trim()}`,
+          'Authorization': `Bearer ${cleanToken}`,
           'Accept': 'application/json',
         },
       });
     } catch (fetchErr: any) {
       // Auto-fallback: If request failed and not yet using internal proxy, retry via internal proxy
       if (!targetUrl.startsWith('/api/proxy')) {
-        const rawTargetUrl = buildUrl(domain, `/api/v1${endpoint}`, false, {
+        const rawTargetUrl = buildUrl(cleanDomain, `/api/v1${endpoint}`, false, {
           per_page: 100,
           page: page
         });
@@ -907,7 +978,7 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
         logger.warn(`Fetch failed (${fetchErr.message}). Retrying via internal proxy: ${internalUrl}`);
         response = await fetch(internalUrl, {
           headers: {
-            'Authorization': `Bearer ${token.trim()}`,
+            'Authorization': `Bearer ${cleanToken}`,
             'Accept': 'application/json',
           },
         });
@@ -996,6 +1067,7 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
         
         const chunkPromises = chunk.map(async (course) => {
             try {
+                const enrollmentEndpoint = `/courses/${course.id}/enrollments?user_id=self&include[]=total_scores&include[]=current_grading_period_scores`;
                 const [assignmentsRaw, modules, enrollments] = await Promise.all([
                 // Added include[]=submission_comments and include[]=score_statistics
                 fetchAll(`/courses/${course.id}/assignments?include[]=submission&include[]=submission_comments&include[]=score_statistics`).catch((e) => {
@@ -1006,15 +1078,18 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
                    logger.warn(`Failed to fetch modules for course ${course.id}`, e.message);
                    return [];
                 }),
-                fetchPage(`/courses/${course.id}/enrollments?user_id=self&include[]=total_scores`, 1).catch((e) => {
+                fetchPage(enrollmentEndpoint, 1).catch((e) => {
                    logger.warn(`Failed to fetch enrollments for course ${course.id}`, e.message);
                    return [];
                 }),
                 ]);
 
-                const enrollment = enrollments.find((e: CanvasEnrollment) => e.course_id === course.id);
+                const matchingEnrollments: CanvasEnrollment[] = Array.isArray(enrollments)
+                  ? enrollments.filter((e: CanvasEnrollment) => e && e.course_id === course.id)
+                  : [];
+                const enrollment = selectPrimaryEnrollment(matchingEnrollments, course.id);
                 if ((enrollment as any)?.user_id) {
-                    setCachedUserId((enrollment as any).user_id);
+                    setCachedUserId((enrollment as any).user_id, cleanDomain, cleanToken);
                 }
                 
                 const assignmentsMap = new Map();
@@ -1030,6 +1105,13 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
                 assignments,
                 modules: Array.isArray(modules) ? modules : [],
                 enrollment,
+                enrollmentsRaw: matchingEnrollments,
+                gradeSourceMeta: {
+                  endpoint: enrollmentEndpoint,
+                  fetchedAt: new Date().toISOString(),
+                  selectedEnrollmentId: enrollment?.id,
+                  enrollmentsCount: matchingEnrollments.length,
+                },
                 };
             } catch (err: any) {
                 logger.error(`Critical failure for course ${course.id} [${course.name}]`, err.message);
@@ -1045,10 +1127,14 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
     return results;
 
   } catch (error: any) {
-    logger.error("Main Fetch Error", error.message);
     let msg = error.message || "Failed to connect to Canvas.";
     if (msg.includes("Failed to fetch")) {
       msg = "Network Error: Could not connect to Canvas. Please verify the domain and ensure your network allows connection.";
+    }
+    if (msg.includes('401') || msg.includes('403') || msg.includes('Missing Canvas')) {
+      logger.warn("Canvas authentication check failed:", msg);
+    } else {
+      logger.error("Main Fetch Error", msg);
     }
     throw new Error(msg);
   }
@@ -1056,6 +1142,11 @@ export const fetchCanvasData = async (domain: string, token: string, useProxy: b
 
 // Fetch the Canvas ToDo List (from /users/self/todo)
 export const fetchTodoItems = async (domain: string, token: string, useProxy: boolean): Promise<CanvasTodoItem[]> => {
+    const cleanDomain = sanitizeCanvasDomain(domain);
+    const cleanToken = sanitizeCanvasToken(token);
+    if (!cleanDomain || cleanDomain.toUpperCase() === 'DEMO' || !cleanToken || cleanToken.toUpperCase() === 'DEMO' || cleanToken.toLowerCase().startsWith('demo')) {
+        return [];
+    }
     logger.info("Fetching global todo items...");
     try {
         const result = await genericCanvasFetch(domain, token, '/users/self/todo', useProxy);
@@ -1071,6 +1162,11 @@ export const fetchTodoItems = async (domain: string, token: string, useProxy: bo
 
 // Mark a ToDo item as Done (using the ignore URL provided by Canvas)
 export const dismissTodoItem = async (domain: string, token: string, useProxy: boolean, item: CanvasTodoItem) => {
+    const cleanDomain = sanitizeCanvasDomain(domain);
+    const cleanToken = sanitizeCanvasToken(token);
+    if (!cleanDomain || cleanDomain.toUpperCase() === 'DEMO' || !cleanToken || cleanToken.toUpperCase() === 'DEMO' || cleanToken.toLowerCase().startsWith('demo')) {
+        return true;
+    }
     if (!item.ignore) {
         logger.warn("Cannot dismiss todo item, no ignore URL found.", item);
         return false;
@@ -1095,6 +1191,201 @@ export const dismissTodoItem = async (domain: string, token: string, useProxy: b
     } catch (e: any) {
         logger.error("Failed to dismiss todo item", e.message);
         return false;
+    }
+};
+
+export const getCourseIdFromAnnouncement = (ann: Partial<CanvasAnnouncement>): number | null => {
+    if (typeof ann.course_id === 'number' && ann.course_id > 0) {
+        return ann.course_id;
+    }
+    if (ann.context_code && ann.context_code.startsWith('course_')) {
+        const parsed = parseInt(ann.context_code.replace('course_', ''), 10);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    if (ann.html_url) {
+        const match = ann.html_url.match(/\/courses\/(\d+)/i);
+        if (match) {
+            const parsed = parseInt(match[1], 10);
+            if (!isNaN(parsed) && parsed > 0) return parsed;
+        }
+    }
+    return null;
+};
+
+export const getMockAnnouncements = (): CanvasAnnouncement[] => {
+    const now = Date.now();
+    return [
+        {
+            id: 5001,
+            title: "Project Milestone Check-In & Lab Hours Extended",
+            message: "<p>Office hours in Turing Hall are extended through 6:00 PM this Thursday ahead of the <strong>Sorting Visualizer</strong> deadline. Bring your GitHub repo link if you want runtime profiling feedback.</p>",
+            posted_at: new Date(now - 3 * 3600 * 1000).toISOString(),
+            context_code: "course_101",
+            course_id: 101,
+            html_url: "https://canvas.instructure.com/courses/101/discussion_topics/5001",
+            read_state: "unread",
+            author: { id: 901, display_name: "Prof. Alan Turing" },
+            workflow_state: "active"
+        },
+        {
+            id: 5002,
+            title: "Updated Formula Sheet Posted for Series & Integrals",
+            message: "<p>Please review the updated trigonometric substitution reference uploaded under Unit 3 Modules before Friday's recitation quiz.</p>",
+            posted_at: new Date(now - 26 * 3600 * 1000).toISOString(),
+            context_code: "course_102",
+            course_id: 102,
+            html_url: "https://canvas.instructure.com/courses/102/discussion_topics/5002",
+            read_state: "unread",
+            author: { id: 902, display_name: "Dr. Katherine Johnson" },
+            workflow_state: "active"
+        },
+        {
+            id: 5003,
+            title: "Recordatorio: Práctica oral en parejas esta semana",
+            message: "<p>Recuerden traer sus apuntes culturales para la actividad de conversación del jueves sobre música latinoamericana.</p>",
+            posted_at: new Date(now - 52 * 3600 * 1000).toISOString(),
+            context_code: "course_104",
+            course_id: 104,
+            html_url: "https://canvas.instructure.com/courses/104/discussion_topics/5003",
+            read_state: "read",
+            author: { id: 904, display_name: "Profa. Elena Morales" },
+            workflow_state: "active"
+        },
+        {
+            id: 5004,
+            title: "Welcome Week Syllabus & Lab Safety Archive",
+            message: "<p>Posted at the start of the semester: please read the lab safety expectations before your first recitation.</p>",
+            posted_at: new Date(now - 60 * 24 * 3600 * 1000).toISOString(),
+            context_code: "course_101",
+            course_id: 101,
+            html_url: "https://canvas.instructure.com/courses/101/discussion_topics/5004",
+            read_state: "unread",
+            author: { id: 901, display_name: "Prof. Alan Turing" },
+            workflow_state: "active"
+        }
+    ];
+};
+
+/**
+ * Fetch Canvas course announcements via /api/v1/announcements (batched by context_codes[]).
+ * Returns mock announcements immediately in Demo mode without issuing network calls.
+ */
+export const fetchAnnouncements = async (
+    domain: string,
+    token: string,
+    useProxy: boolean,
+    courseIds: number[] = []
+): Promise<CanvasAnnouncement[]> => {
+    const cleanDomain = sanitizeCanvasDomain(domain);
+    const cleanToken = sanitizeCanvasToken(token);
+    const isDemo =
+        !cleanDomain ||
+        cleanDomain.toUpperCase() === 'DEMO' ||
+        !cleanToken ||
+        cleanToken.toUpperCase() === 'DEMO' ||
+        cleanToken.toLowerCase().startsWith('demo');
+    if (isDemo) {
+        return getMockAnnouncements();
+    }
+
+    const validCourseIds = Array.from(new Set(courseIds.filter(id => typeof id === 'number' && id > 0)));
+    if (validCourseIds.length === 0) {
+        return [];
+    }
+
+    logger.info(`Fetching Canvas announcements for ${validCourseIds.length} courses...`);
+    const now = new Date();
+    const pastLimit = new Date(now.getTime() - 120 * 24 * 3600 * 1000);
+    const futureLimit = new Date(now.getTime() + 14 * 24 * 3600 * 1000);
+    const startStr = formatDateYMD(pastLimit);
+    const endStr = formatDateYMD(futureLimit);
+
+    const announcementsMap = new Map<number, CanvasAnnouncement>();
+    const chunks: number[][] = [];
+    for (let i = 0; i < validCourseIds.length; i += 10) {
+        chunks.push(validCourseIds.slice(i, i + 10));
+    }
+
+    await Promise.all(
+        chunks.map(async (chunk) => {
+            const contextQuery = chunk
+                .map(id => `context_codes[]=${encodeURIComponent(`course_${id}`)}`)
+                .join('&');
+            const endpoint = `/announcements?start_date=${startStr}&end_date=${endStr}&active_only=true&latest_only=false&per_page=100&${contextQuery}`;
+            try {
+                const res = await genericCanvasFetch(domain, token, endpoint, useProxy);
+                if (res.status === 200 && Array.isArray(res.data)) {
+                    res.data.forEach((raw: any) => {
+                        if (!raw || !raw.id || raw.workflow_state === 'deleted') return;
+                        const resolvedCourseId = getCourseIdFromAnnouncement(raw);
+                        announcementsMap.set(raw.id, {
+                            ...raw,
+                            course_id: resolvedCourseId ?? raw.course_id,
+                            message: raw.message || '',
+                            title: raw.title || 'Announcement',
+                            posted_at: raw.posted_at || raw.created_at || null,
+                        });
+                    });
+                } else {
+                    logger.warn(`[Announcements] Batch query returned HTTP ${res.status}`);
+                }
+            } catch (e: any) {
+                logger.warn("[Announcements] Batch fetch warning:", e?.message || e);
+            }
+        })
+    );
+
+    const sorted = Array.from(announcementsMap.values()).sort((a, b) => {
+        const ta = new Date(a.posted_at || a.created_at || 0).getTime() || 0;
+        const tb = new Date(b.posted_at || b.created_at || 0).getTime() || 0;
+        return tb - ta;
+    });
+
+    logger.info(`[Announcements] Loaded ${sorted.length} announcements.`);
+    return sorted;
+};
+
+/**
+ * Mark an announcement as read/dismissed on Canvas via PUT /api/v1/courses/:course_id/discussion_topics/:topic_id/read.
+ * Canvas REST API uses discussion topic read_state for course announcements; Velm pairs this with per-student local persistence.
+ */
+export const dismissAnnouncement = async (
+    domain: string,
+    token: string,
+    useProxy: boolean,
+    announcement: CanvasAnnouncement
+): Promise<{ ok: boolean; syncedToCanvas: boolean }> => {
+    const cleanDomain = sanitizeCanvasDomain(domain);
+    const cleanToken = sanitizeCanvasToken(token);
+    const isDemo =
+        !cleanDomain ||
+        cleanDomain.toUpperCase() === 'DEMO' ||
+        !cleanToken ||
+        cleanToken.toUpperCase() === 'DEMO' ||
+        cleanToken.toLowerCase().startsWith('demo');
+
+    if (isDemo) {
+        return { ok: true, syncedToCanvas: false };
+    }
+
+    const courseId = getCourseIdFromAnnouncement(announcement);
+    if (!courseId || !announcement.id || announcement.id <= 0) {
+        logger.warn("Dismissing announcement locally only (missing courseId/topicId):", announcement.id);
+        return { ok: true, syncedToCanvas: false };
+    }
+
+    try {
+        const endpoint = `/courses/${courseId}/discussion_topics/${announcement.id}/read`;
+        logger.info(`Marking Canvas announcement ${announcement.id} (course ${courseId}) as read via PUT ${endpoint}`);
+        const res = await genericCanvasFetch(domain, token, endpoint, useProxy, 'PUT');
+        if (res.status >= 200 && res.status < 300) {
+            return { ok: true, syncedToCanvas: true };
+        }
+        logger.warn(`Canvas announcement read endpoint returned HTTP ${res.status}; keeping local dismissal.`);
+        return { ok: true, syncedToCanvas: false };
+    } catch (e: any) {
+        logger.warn("Failed to sync announcement read state to Canvas; keeping local dismissal:", e?.message || e);
+        return { ok: true, syncedToCanvas: false };
     }
 };
 
@@ -1337,6 +1628,76 @@ export const diagnoseCalendarEventsFetch = async (
     return report;
 };
 
+export const getMockCalendarEvents = (): CanvasCalendarEvent[] => {
+    const now = Date.now();
+    const tomorrow = new Date(now + 24 * 3600 * 1000).toISOString();
+    const inThreeDays = new Date(now + 3 * 24 * 3600 * 1000).toISOString();
+    const nextWeek = new Date(now + 7 * 24 * 3600 * 1000).toISOString();
+    const inTwoWeeks = new Date(now + 14 * 24 * 3600 * 1000).toISOString();
+
+    return [
+        {
+            id: 9001,
+            title: "CS Colloquium: Modern Distributed Systems",
+            start_at: tomorrow,
+            end_at: new Date(now + (24 + 2) * 3600 * 1000).toISOString(),
+            description: "Guest lecture in Turing Hall Room 101.",
+            context_code: "course_101",
+            effective_context_code: "course_101",
+            location_name: "Turing Hall 101",
+            html_url: "https://canvas.instructure.com/calendar?event_id=9001",
+            workflow_state: "active"
+        },
+        {
+            id: 9002,
+            title: "Calculus Midterm Review Session",
+            start_at: inThreeDays,
+            end_at: new Date(now + (3 * 24 + 2) * 3600 * 1000).toISOString(),
+            description: "TA-led problem review on series and differential equations.",
+            context_code: "course_102",
+            effective_context_code: "course_102",
+            location_name: "Euler Hall 204",
+            html_url: "https://canvas.instructure.com/calendar?event_id=9002",
+            workflow_state: "active"
+        },
+        {
+            id: 9003,
+            title: "Campus Academic Advising Fair",
+            start_at: nextWeek,
+            end_at: new Date(now + (7 * 24 + 4) * 3600 * 1000).toISOString(),
+            description: "Spring advising and course selection expo.",
+            context_code: "user_self",
+            location_name: "Student Union Grand Ballroom",
+            html_url: "https://canvas.instructure.com/calendar?event_id=9003",
+            workflow_state: "active"
+        },
+        {
+            id: 9004,
+            title: "CS Hackathon & Project Showcase",
+            start_at: inTwoWeeks,
+            end_at: new Date(now + (14 * 24 + 6) * 3600 * 1000).toISOString(),
+            description: "Annual project showcase and awards ceremony.",
+            context_code: "course_101",
+            effective_context_code: "course_101",
+            location_name: "Innovation Lab",
+            html_url: "https://canvas.instructure.com/calendar?event_id=9004",
+            workflow_state: "active"
+        },
+        {
+            id: 9005,
+            title: "Past Lab Orientation & Safety Briefing",
+            start_at: new Date(now - 3 * 24 * 3600 * 1000).toISOString(),
+            end_at: new Date(now - (3 * 24 - 1) * 3600 * 1000).toISOString(),
+            description: "Completed lab safety orientation session from earlier this week.",
+            context_code: "course_101",
+            effective_context_code: "course_101",
+            location_name: "Science Annex 110",
+            html_url: "https://canvas.instructure.com/calendar?event_id=9005",
+            workflow_state: "active"
+        }
+    ];
+};
+
 // Fetch Calendar Events from Canvas LMS (or return mock events in demo mode)
 export const fetchCalendarEvents = async (
     domain: string, 
@@ -1346,61 +1707,7 @@ export const fetchCalendarEvents = async (
 ): Promise<CanvasCalendarEvent[]> => {
     const isDemo = !domain || domain === 'DEMO' || !token || token === 'DEMO' || token.toLowerCase().startsWith('demo');
     if (isDemo) {
-        const now = Date.now();
-        const tomorrow = new Date(now + 24 * 3600 * 1000).toISOString();
-        const inThreeDays = new Date(now + 3 * 24 * 3600 * 1000).toISOString();
-        const nextWeek = new Date(now + 7 * 24 * 3600 * 1000).toISOString();
-        const inTwoWeeks = new Date(now + 14 * 24 * 3600 * 1000).toISOString();
-
-        return [
-            {
-                id: 9001,
-                title: "CS Colloquium: Modern Distributed Systems",
-                start_at: tomorrow,
-                end_at: new Date(now + (24 + 2) * 3600 * 1000).toISOString(),
-                description: "Guest lecture in Turing Hall Room 101.",
-                context_code: "course_101",
-                effective_context_code: "course_101",
-                location_name: "Turing Hall 101",
-                html_url: "#",
-                workflow_state: "active"
-            },
-            {
-                id: 9002,
-                title: "Calculus Midterm Review Session",
-                start_at: inThreeDays,
-                end_at: new Date(now + (3 * 24 + 2) * 3600 * 1000).toISOString(),
-                description: "TA-led problem review on series and differential equations.",
-                context_code: "course_102",
-                effective_context_code: "course_102",
-                location_name: "Euler Hall 204",
-                html_url: "#",
-                workflow_state: "active"
-            },
-            {
-                id: 9003,
-                title: "Campus Academic Advising Fair",
-                start_at: nextWeek,
-                end_at: new Date(now + (7 * 24 + 4) * 3600 * 1000).toISOString(),
-                description: "Spring advising and course selection expo.",
-                context_code: "user_self",
-                location_name: "Student Union Grand Ballroom",
-                html_url: "#",
-                workflow_state: "active"
-            },
-            {
-                id: 9004,
-                title: "CS Hackathon & Project Showcase",
-                start_at: inTwoWeeks,
-                end_at: new Date(now + (14 * 24 + 6) * 3600 * 1000).toISOString(),
-                description: "Annual project showcase and awards ceremony.",
-                context_code: "course_101",
-                effective_context_code: "course_101",
-                location_name: "Innovation Lab",
-                html_url: "#",
-                workflow_state: "active"
-            }
-        ];
+        return getMockCalendarEvents();
     }
 
     logger.info("Fetching Canvas calendar events...");
@@ -1425,7 +1732,7 @@ export const fetchCalendarEvents = async (
             if (upcomingRes.status === 200 && Array.isArray(upcomingRes.data)) {
                 const nonAssignmentItems = upcomingRes.data.filter((item: any) => !item.assignment && item.type !== 'assignment');
                 nonAssignmentItems.forEach((ev: CanvasCalendarEvent) => {
-                    if (ev.id) eventsMap.set(ev.id, ev);
+                    if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
                 });
                 logger.info(`[Calendar] Retrieved ${nonAssignmentItems.length} calendar events from /users/self/upcoming_events.`);
             }
@@ -1433,32 +1740,35 @@ export const fetchCalendarEvents = async (
             logger.warn("[Calendar] Upcoming events endpoint note:", err.message);
         }
 
-        // Strategy 2: Personal user calendar events (both Future & Past)
+        // Strategy 2: Personal user calendar events via all_events=true & date window
+        // In Canvas API, omitting context_codes[] returns the current authenticated user's personal calendar events
         try {
-            // Future personal events (primary)
+            const cachedUid = getCachedUserId(domain, token);
+            const userContextParam = cachedUid ? `&context_codes[]=user_${cachedUid}` : '';
+
+            // First try with all_events=true for personal context
+            const personalAllRes = await fetchCalendarEventsPaginated(
+                domain,
+                token,
+                `/calendar_events?type=event&all_events=true${userContextParam}`,
+                useProxy,
+                3
+            );
+            personalAllRes.events.forEach(ev => {
+                if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
+            });
+
+            // Also check future personal date range as fallback
             const personalFutureRes = await fetchCalendarEventsPaginated(
                 domain, 
                 token, 
-                `/calendar_events?type=event&start_date=${todayStr}&end_date=${futureEndStr}`, 
+                `/calendar_events?type=event&start_date=${todayStr}&end_date=${futureEndStr}${userContextParam}`, 
                 useProxy, 
                 3
             );
             personalFutureRes.events.forEach(ev => {
-                if (ev.id) eventsMap.set(ev.id, ev);
+                if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
             });
-
-            // Recent past personal events (secondary)
-            const personalPastRes = await fetchCalendarEventsPaginated(
-                domain, 
-                token, 
-                `/calendar_events?type=event&start_date=${pastStartStr}&end_date=${todayStr}`, 
-                useProxy, 
-                2
-            );
-            personalPastRes.events.forEach(ev => {
-                if (ev.id) eventsMap.set(ev.id, ev);
-            });
-            logger.info(`[Calendar] Retrieved ${personalFutureRes.events.length} future and ${personalPastRes.events.length} past personal events.`);
         } catch (err: any) {
             logger.warn("[Calendar] Personal calendar fetch note:", err.message);
         }
@@ -1474,24 +1784,34 @@ export const fetchCalendarEvents = async (
             const fetchBatch = async (chunk: number[]) => {
                 const queryPart = chunk.map(id => `context_codes[]=${encodeURIComponent(`course_${id}`)}`).join('&');
                 
-                // 3a. CRITICAL: Fetch FUTURE course events first (today through +365 days) with pagination!
+                // 3a. Primary: Fetch with all_events=true
                 try {
-                    const futureEndpoint = `/calendar_events?type=event&start_date=${todayStr}&end_date=${futureEndStr}&${queryPart}`;
+                    const allEventsEndpoint = `/calendar_events?all_events=true&${queryPart}`;
+                    const allBatch = await fetchCalendarEventsPaginated(domain, token, allEventsEndpoint, useProxy, 5);
+                    allBatch.events.forEach(ev => {
+                        if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
+                    });
+                } catch (e: any) {
+                    logger.warn("[Calendar] Batch all_events fetch note:", e.message);
+                }
+
+                // 3b. Fallback: Fetch FUTURE course events with date range
+                try {
+                    const futureEndpoint = `/calendar_events?start_date=${todayStr}&end_date=${futureEndStr}&${queryPart}`;
                     const futureBatch = await fetchCalendarEventsPaginated(domain, token, futureEndpoint, useProxy, 5);
                     futureBatch.events.forEach(ev => {
-                        if (ev.id) eventsMap.set(ev.id, ev);
+                        if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
                     });
-                    logger.info(`[Calendar] Batch courses [${chunk.join(', ')}]: found ${futureBatch.events.length} future events.`);
                 } catch (e: any) {
                     logger.warn("[Calendar] Batch future events fetch error:", e.message);
                 }
 
-                // 3b. Fetch PAST course events (past 90 days up to today) with pagination
+                // 3c. Fetch PAST course events (past 90 days up to today)
                 try {
-                    const pastEndpoint = `/calendar_events?type=event&start_date=${pastStartStr}&end_date=${todayStr}&${queryPart}`;
+                    const pastEndpoint = `/calendar_events?start_date=${pastStartStr}&end_date=${todayStr}&${queryPart}`;
                     const pastBatch = await fetchCalendarEventsPaginated(domain, token, pastEndpoint, useProxy, 3);
                     pastBatch.events.forEach(ev => {
-                        if (ev.id) eventsMap.set(ev.id, ev);
+                        if (ev.id && ev.workflow_state !== 'deleted') eventsMap.set(ev.id, ev);
                     });
                 } catch (e: any) {
                     logger.warn("[Calendar] Batch past events fetch note:", e.message);
@@ -1501,20 +1821,36 @@ export const fetchCalendarEvents = async (
             await Promise.all(chunks.map(chunk => fetchBatch(chunk)));
         }
 
-        const allEvents = Array.from(eventsMap.values());
+        const allEvents = Array.from(eventsMap.values())
+            .filter(e => e.workflow_state !== 'deleted')
+            .map(e => ({
+                ...e,
+                html_url: getCalendarEventWebUrl(e, domain) || e.html_url || ''
+            }));
         logger.info(`[Calendar] Total combined calendar events: ${allEvents.length}`);
         return allEvents;
     } catch (e: any) {
         logger.warn("Failed to fetch calendar events", e.message);
-        return Array.from(eventsMap.values());
+        return Array.from(eventsMap.values())
+            .filter(e => e.workflow_state !== 'deleted')
+            .map(e => ({
+                ...e,
+                html_url: getCalendarEventWebUrl(e, domain) || e.html_url || ''
+            }));
     }
 };
 
-// In-memory cache for fetched assignment details
+// In-memory cache for fetched assignment details scoped by credential
 const assignmentDetailsCache = new Map<string, CanvasAssignmentDetail>();
 
-export const getCachedAssignmentDetail = (courseId: number, assignmentId: number): CanvasAssignmentDetail | undefined => {
-    return assignmentDetailsCache.get(`${courseId}_${assignmentId}`);
+export const getCachedAssignmentDetail = (
+    courseId: number,
+    assignmentId: number,
+    domain?: string,
+    token?: string
+): CanvasAssignmentDetail | undefined => {
+    const scope = getCredentialScopeKey(domain, token);
+    return assignmentDetailsCache.get(`${scope}:${courseId}_${assignmentId}`);
 };
 
 const getMockAssignmentDetail = (
@@ -1760,7 +2096,8 @@ export const fetchAssignmentDetails = async (
     useProxy: boolean = false,
     fallbackAssignment?: Partial<CanvasAssignment>
 ): Promise<CanvasAssignmentDetail> => {
-    const cacheKey = `${courseId}_${assignmentId}`;
+    const scope = getCredentialScopeKey(domain, token);
+    const cacheKey = `${scope}:${courseId}_${assignmentId}`;
     if (assignmentDetailsCache.has(cacheKey)) {
         return assignmentDetailsCache.get(cacheKey)!;
     }
@@ -1788,7 +2125,10 @@ export const fetchAssignmentDetails = async (
                     due_at: ev.end_at || ev.start_at || fallbackAssignment?.due_at || null,
                     points_possible: 0,
                     course_id: courseId,
-                    html_url: ev.html_url || fallbackAssignment?.html_url || '',
+                    html_url:
+                      getCalendarEventWebUrl({ ...ev, id: eventId, course_id: courseId }, domain) ||
+                      getCalendarEventWebUrl(fallbackAssignment, domain) ||
+                      '',
                     is_calendar_event: true,
                     location_name: ev.location_name || fallbackAssignment?.location_name || '',
                     submission_types: ['none'],
@@ -1864,4 +2204,115 @@ export const fetchAssignmentDetails = async (
         assignmentDetailsCache.set(cacheKey, fallbackDetail);
         return fallbackDetail;
     }
+};
+
+export const fetchCourseGradeDiagnostics = async (
+  domain: string,
+  token: string,
+  courseId: number,
+  useProxy: boolean = false
+): Promise<CourseGradeDiagnosticsResult> => {
+  const cleanDomain = sanitizeCanvasDomain(domain);
+  const cleanToken = sanitizeCanvasToken(token);
+  const fetchedAt = new Date().toISOString();
+
+  const courseEndpoint = `/courses/${courseId}?include[]=total_scores&include[]=current_grading_period_scores&include[]=term`;
+  const enrollmentsEndpoint = `/courses/${courseId}/enrollments?user_id=self&include[]=total_scores&include[]=current_grading_period_scores`;
+  const groupsEndpoint = `/courses/${courseId}/assignment_groups?include[]=assignments&include[]=submission`;
+  const endpoints = [courseEndpoint, enrollmentsEndpoint, groupsEndpoint];
+
+  const isMock =
+    !cleanDomain ||
+    cleanDomain.toUpperCase() === 'DEMO' ||
+    !cleanToken ||
+    cleanToken.toUpperCase() === 'DEMO' ||
+    cleanToken.toLowerCase().startsWith('demo') ||
+    cleanToken.trim() === 'mock' ||
+    cleanDomain.includes('example.com');
+
+  if (isMock) {
+    const mockCourse = MOCK_COURSES.find((c) => c.course.id === courseId);
+    const mockAssignments = mockCourse?.assignments || [];
+    const demoGroups: CanvasAssignmentGroup[] = [
+      {
+        id: courseId * 10 + 1,
+        name: 'Coursework & Assessments',
+        position: 1,
+        group_weight: 100,
+        assignments: mockAssignments,
+      },
+    ];
+    return {
+      courseId,
+      fetchedAt,
+      courseRaw: mockCourse?.course ? { ...mockCourse.course, apply_assignment_group_weights: false } : undefined,
+      enrollmentsRaw: mockCourse?.enrollment ? [mockCourse.enrollment] : [],
+      assignmentGroupsRaw: demoGroups,
+      endpoints,
+      errors: [],
+    };
+  }
+
+  logger.info(`[Grade Inspector] Fetching live ground-truth grade payloads for course ${courseId}...`);
+
+  const [courseRes, enrollmentsRes, groupsRes] = await Promise.allSettled([
+    genericCanvasFetch(domain, token, courseEndpoint, useProxy),
+    genericCanvasFetch(domain, token, enrollmentsEndpoint, useProxy),
+    genericCanvasFetch(domain, token, groupsEndpoint, useProxy),
+  ]);
+
+  const errors: string[] = [];
+  let courseRaw: any = undefined;
+  let enrollmentsRaw: CanvasEnrollment[] = [];
+  let assignmentGroupsRaw: CanvasAssignmentGroup[] = [];
+
+  if (courseRes.status === 'fulfilled' && courseRes.value.status >= 200 && courseRes.value.status < 300) {
+    courseRaw = courseRes.value.data;
+  } else {
+    const msg =
+      courseRes.status === 'rejected'
+        ? courseRes.reason?.message || 'Network error'
+        : `HTTP ${courseRes.value.status}`;
+    errors.push(`Course endpoint failed (${msg})`);
+  }
+
+  if (
+    enrollmentsRes.status === 'fulfilled' &&
+    enrollmentsRes.value.status >= 200 &&
+    enrollmentsRes.value.status < 300 &&
+    Array.isArray(enrollmentsRes.value.data)
+  ) {
+    enrollmentsRaw = enrollmentsRes.value.data;
+  } else {
+    const msg =
+      enrollmentsRes.status === 'rejected'
+        ? enrollmentsRes.reason?.message || 'Network error'
+        : `HTTP ${enrollmentsRes.value.status}`;
+    errors.push(`Enrollments endpoint failed (${msg})`);
+  }
+
+  if (
+    groupsRes.status === 'fulfilled' &&
+    groupsRes.value.status >= 200 &&
+    groupsRes.value.status < 300 &&
+    Array.isArray(groupsRes.value.data)
+  ) {
+    assignmentGroupsRaw = groupsRes.value.data;
+  } else {
+    const msg =
+      groupsRes.status === 'rejected'
+        ? groupsRes.reason?.message || 'Network error'
+        : `HTTP ${groupsRes.value.status}`;
+    errors.push(`Assignment groups endpoint failed (${msg})`);
+  }
+
+  return {
+    courseId,
+    fetchedAt,
+    courseRaw,
+    enrollmentsRaw,
+    assignmentGroupsRaw,
+    endpoints,
+    errors,
+  };
 };

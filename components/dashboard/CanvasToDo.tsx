@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CanvasTodoItem } from '../../types';
+import { CanvasTodoItem, CanvasAssignment, CanvasModule, CourseData } from '../../types';
 import { 
   CheckCircle, 
   Calendar, 
@@ -9,13 +9,16 @@ import {
   FileText,
   ChevronDown,
   ChevronRight,
-  FileQuestion
+  FileQuestion,
+  Maximize2
 } from 'lucide-react';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { cleanAssignmentDescription, linkifyHtml, formatPoints, formatRelativeDueDate } from '../../utils/dashboard-helpers';
 import { CourseCustomization } from '../../services/courseCustomization';
-import { CourseData } from '../../types';
+import { GradeScaleConfig, DEFAULT_GRADE_CONFIG } from '../../services/gradeScale';
+import { AssignmentZoomModal } from './AssignmentZoomModal';
 import { useNow } from '../../utils/useRelativeTime';
+import { extractAssignmentFromTodo } from '../../utils/canvasUrls';
 
 interface CanvasToDoProps {
   items: CanvasTodoItem[];
@@ -24,6 +27,14 @@ interface CanvasToDoProps {
   courseCustomizations?: Record<number, CourseCustomization>;
   getCourseName?: (id: number) => string;
   courses?: CourseData[];
+  canvasUrl?: string;
+  apiKey?: string;
+  useProxy?: boolean;
+  acknowledgedFeedbackIds?: Set<string | number>;
+  onToggleAcknowledgeComment?: (commentId: string | number) => void;
+  onAcknowledgeAllComments?: (commentIds: (string | number)[]) => void;
+  gradeConfig?: GradeScaleConfig;
+  onOpenGradeSettings?: () => void;
 }
 
 export const CanvasToDo: React.FC<CanvasToDoProps> = ({ 
@@ -32,11 +43,24 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
   showIds = false,
   courseCustomizations = {},
   getCourseName,
-  courses = []
+  courses = [],
+  canvasUrl = '',
+  apiKey = '',
+  useProxy = true,
+  acknowledgedFeedbackIds,
+  onToggleAcknowledgeComment,
+  onAcknowledgeAllComments,
+  gradeConfig = DEFAULT_GRADE_CONFIG,
+  onOpenGradeSettings
 }) => {
   const now = useNow();
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+
+  // Zoom for Details Modal State
+  const [zoomedAssignment, setZoomedAssignment] = useState<CanvasAssignment | null>(null);
+  const [zoomedCourseName, setZoomedCourseName] = useState<string>('Course');
+  const [zoomedCourseModules, setZoomedCourseModules] = useState<CanvasModule[]>([]);
 
   const handleDone = async (item: CanvasTodoItem, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -85,12 +109,8 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
                 {items.length} {items.length === 1 ? 'task' : 'tasks'}
               </span>
             </h2>
-            <p className="text-xs text-slate-500">Official Canvas planner assignments & actionable items</p>
           </div>
         </div>
-        <span className="text-xs text-slate-400 hidden sm:inline">
-          Same layout & edge-bonding as assignment cards
-        </span>
       </div>
       
       {/* Grid of edge-bonded ToDo cards identical to assignment cards */}
@@ -102,36 +122,52 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
           const isProcessing = processingId === uniqueKey;
           const isExpanded = expandedKeys.has(uniqueKey);
 
-          const title = item.assignment?.name || item.quiz?.title || 'Canvas To-Do Item';
-          const courseId = item.course_id || item.assignment?.course_id || item.context_id;
+          const extracted = extractAssignmentFromTodo(item, courses, canvasUrl);
+          const targetAssignment: CanvasAssignment | null = extracted?.assignment || item.assignment || null;
+
+          const title = item.assignment?.name || item.quiz?.title || (item as any).title || extracted?.assignment?.name || 'Canvas To-Do Item';
+          const courseId = extracted?.courseId || item.course_id || item.assignment?.course_id || item.context_id;
           const matchedCourse = !courseId && courses.length > 0 && item.context_name 
             ? courses.find(c => c.course.name === item.context_name || c.course.course_code === item.context_name)
             : undefined;
           const resolvedCourseId = courseId || matchedCourse?.course.id;
 
           const customCourse = resolvedCourseId ? courseCustomizations[resolvedCourseId] : undefined;
-          const rawCourseName = item.context_name ? pruneCourseTitle(item.context_name) : 'Course';
+          const rawCourseName = extracted?.courseName || (item.context_name ? pruneCourseTitle(item.context_name) : 'Course');
           const courseName = (resolvedCourseId && getCourseName)
             ? getCourseName(resolvedCourseId)
-            : (customCourse?.abbreviation || rawCourseName);
+            : rawCourseName;
           const emoji = customCourse?.emoji;
 
-          const rawDesc = item.assignment?.description || item.quiz?.description;
+          const rawDesc = item.assignment?.description || item.quiz?.description || targetAssignment?.description;
           const cleanedDesc = cleanAssignmentDescription(rawDesc);
           const hasBodyContent = !!cleanedDesc;
 
           const isQuiz = !!item.quiz || item.type === 'online_quiz';
           const isGrading = item.type === 'grading';
-          const itemId = item.assignment?.id || item.quiz?.id || item.id;
+          const itemId = extracted?.assignmentId || item.assignment?.id || item.quiz?.id || item.id;
+          const targetModules = extracted?.modules && extracted.modules.length > 0
+            ? extracted.modules
+            : (resolvedCourseId ? courses.find(c => c.course.id === resolvedCourseId)?.modules || [] : []);
+
+          const canvasLink = targetAssignment?.html_url || item.assignment?.html_url || item.html_url;
 
           return (
             <div 
               key={uniqueKey} 
-              onClick={() => hasBodyContent && toggleExpand(uniqueKey)}
-              className={`relative bg-white rounded-xl shadow-xs border border-slate-200/90 hover:shadow-md hover:border-slate-300 transition-all group flex flex-col justify-between overflow-hidden ${
-                hasBodyContent ? 'cursor-pointer' : ''
-              } ${isExpanded ? 'ring-2 ring-blue-100' : ''}`}
-              title={hasBodyContent ? (isExpanded ? "Click to collapse instructions" : "Click to view instructions") : undefined}
+              onClick={() => {
+                if (targetAssignment) {
+                  setZoomedAssignment(targetAssignment);
+                  setZoomedCourseName(courseName);
+                  setZoomedCourseModules(targetModules);
+                } else if (hasBodyContent) {
+                  toggleExpand(uniqueKey);
+                }
+              }}
+              className={`relative bg-white rounded-xl shadow-xs border border-slate-200/90 hover:shadow-md hover:border-slate-300 transition-all group flex flex-col justify-between overflow-hidden cursor-pointer ${
+                isExpanded ? 'ring-2 ring-blue-100' : ''
+              }`}
+              title="Click card to zoom for details"
             >
               {/* Flat left accent stripe (replaces border-l-4 to eliminate C-shape curve and tip hooks) */}
               <div className="absolute left-0 top-0 bottom-0 w-1 bg-sky-400/80 pointer-events-none z-10" />
@@ -173,9 +209,9 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
                       {formatPoints(points)}
                     </span>
                   )}
-                  {item.html_url && (
+                  {canvasLink && (
                     <a 
-                      href={item.html_url} 
+                      href={canvasLink} 
                       target="_blank" 
                       rel="noreferrer" 
                       onClick={(e) => e.stopPropagation()} 
@@ -191,13 +227,14 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
               {/* Card Body */}
               <div className="p-3 flex-1 min-w-0 bg-white">
                 <h4 className="font-semibold text-slate-800 group-hover:text-blue-600 transition text-sm leading-snug line-clamp-2" title={title}>
-                  {item.html_url ? (
+                  {canvasLink ? (
                     <a 
-                      href={item.html_url} 
+                      href={canvasLink} 
                       target="_blank" 
                       rel="noreferrer" 
                       onClick={(e) => e.stopPropagation()} 
-                      className="hover:underline"
+                      className="hover:underline text-slate-900 hover:text-blue-600 transition"
+                      title="Open in Canvas"
                     >
                       {title}
                     </a>
@@ -229,8 +266,25 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
                   </span>
                 </div>
 
-                {/* Right controls: Details toggle + "Done?" Checkbox */}
-                <div className="flex items-center gap-2 shrink-0">
+                {/* Right controls: Details toggle + Zoom for Details + "Done?" Checkbox */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {targetAssignment && (
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomedAssignment(targetAssignment);
+                        setZoomedCourseName(courseName);
+                        setZoomedCourseModules(targetModules);
+                      }}
+                      className="text-[10px] font-semibold text-slate-700 hover:text-blue-700 bg-white hover:bg-blue-50 px-2 py-0.5 rounded border border-slate-200 hover:border-blue-300 transition inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                      title="Zoom for Details (instructions, rubrics, feedback, module resources)"
+                    >
+                      <Maximize2 className="w-3 h-3 text-slate-500" />
+                      <span>Zoom</span>
+                    </button>
+                  )}
+
                   {hasBodyContent && (
                     <button 
                       type="button" 
@@ -274,6 +328,24 @@ export const CanvasToDo: React.FC<CanvasToDoProps> = ({
           );
         })}
       </div>
+
+      {/* Zoom for Details Modal */}
+      {zoomedAssignment && (
+        <AssignmentZoomModal
+          assignment={zoomedAssignment}
+          courseName={zoomedCourseName}
+          canvasUrl={canvasUrl}
+          apiKey={apiKey}
+          useProxy={useProxy}
+          onClose={() => setZoomedAssignment(null)}
+          acknowledgedFeedbackIds={acknowledgedFeedbackIds}
+          onToggleAcknowledgeComment={onToggleAcknowledgeComment}
+          onAcknowledgeAllComments={onAcknowledgeAllComments}
+          gradeConfig={gradeConfig}
+          onOpenGradeSettings={onOpenGradeSettings}
+          courseModules={zoomedCourseModules}
+        />
+      )}
     </div>
   );
 };
