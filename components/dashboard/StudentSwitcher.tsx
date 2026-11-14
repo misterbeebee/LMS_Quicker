@@ -23,10 +23,15 @@ import {
 } from '../../services/students';
 import { sanitizeCanvasDomain, sanitizeCanvasToken } from '../../utils/canvasUrls';
 
+import { ErrorBoundary } from '../ErrorBoundary';
+import { StudentVueVerifyModal } from './StudentVueVerifyModal';
+
 interface StudentSwitcherProps {
   currentStudentId?: string;
   currentStudentName?: string;
   currentDomain?: string;
+  canvasToken?: string;
+  useProxy?: boolean;
   onSwitchStudent: (student: StudentProfile) => void;
   onRenameStudent?: (newName: string) => void;
   compact?: boolean;
@@ -45,6 +50,8 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
   currentStudentId,
   currentStudentName,
   currentDomain,
+  canvasToken,
+  useProxy = true,
   onSwitchStudent,
   onRenameStudent,
   compact = false,
@@ -52,6 +59,7 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [isStudentVueModalOpen, setIsStudentVueModalOpen] = useState(false);
   const [students, setStudents] = useState<StudentProfile[]>(() => getSavedStudents());
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
@@ -519,6 +527,21 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
           </div>
         </div>
       )}
+
+      {/* Experimental StudentVUE Verification Modal (isolated via ErrorBoundary) */}
+      <ErrorBoundary
+        fallbackTitle="StudentVUE Verification Unavailable"
+        onReset={() => setIsStudentVueModalOpen(false)}
+      >
+        <StudentVueVerifyModal
+          isOpen={isStudentVueModalOpen}
+          onClose={() => setIsStudentVueModalOpen(false)}
+          studentName={displayName}
+          canvasDomain={currentDomain || activeStudent?.domain}
+          canvasToken={canvasToken || activeStudent?.apiKey}
+          useProxy={useProxy ?? activeStudent?.useProxy ?? true}
+        />
+      </ErrorBoundary>
     </div>
   );
 };

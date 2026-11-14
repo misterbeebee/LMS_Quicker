@@ -29,6 +29,8 @@ interface SidebarProps {
   currentStudentId?: string;
   currentStudentName?: string;
   currentDomain?: string;
+  canvasToken?: string;
+  useProxy?: boolean;
   onSwitchStudent?: (student: StudentProfile) => void;
   onRenameStudent?: (newName: string) => void;
   courseCustomizations?: Record<number, CourseCustomization>;
@@ -60,6 +62,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentStudentId,
   currentStudentName,
   currentDomain,
+  canvasToken,
+  useProxy = true,
   onSwitchStudent,
   onRenameStudent,
   courseCustomizations = {},
@@ -203,6 +207,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               currentStudentId={currentStudentId}
               currentStudentName={currentStudentName}
               currentDomain={currentDomain}
+              canvasToken={canvasToken}
+              useProxy={useProxy}
               onSwitchStudent={onSwitchStudent}
               onRenameStudent={onRenameStudent}
               compact={isEffectiveCollapsed}
