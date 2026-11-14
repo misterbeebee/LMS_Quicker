@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   ShieldCheck,
@@ -13,10 +13,13 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Check,
 } from 'lucide-react';
 import {
   verifyStudentVueAccount,
   StudentVueVerifyOutcome,
+  SYNERGY_ENDPOINT_OPTIONS,
+  inferSuggestedSynergyDomain,
 } from '../../services/studentvue';
 import { logger } from '../../services/logger';
 
@@ -44,7 +47,9 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   // Strictly transient in-memory state — never persisted to localStorage or any server
   const [edupointUsername, setEdupointUsername] = useState('');
   const [edupointPassword, setEdupointPassword] = useState('');
-  const [districtDomain, setDistrictDomain] = useState('');
+  const [districtDomain, setDistrictDomain] = useState(() => inferSuggestedSynergyDomain(canvasDomain));
+  const [isEndpointDropdownOpen, setIsEndpointDropdownOpen] = useState(false);
+  const [endpointShowAll, setEndpointShowAll] = useState(false);
   const [isParent, setIsParent] = useState(false);
 
   const [showApiConfig, setShowApiConfig] = useState(false);
@@ -55,16 +60,32 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [outcome, setOutcome] = useState<StudentVueVerifyOutcome | null>(null);
 
-  // Clear all transient secrets whenever the modal closes or unmounts
+  const endpointComboboxRef = useRef<HTMLDivElement>(null);
+
+  // Close Synergy endpoint combobox menu on outside click
   useEffect(() => {
-    if (!isOpen) {
+    const handleOutside = (event: MouseEvent) => {
+      if (endpointComboboxRef.current && !endpointComboboxRef.current.contains(event.target as Node)) {
+        setIsEndpointDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, []);
+
+  // Suggest matching Synergy endpoint when opening for a recognized district, clear secrets on close
+  useEffect(() => {
+    if (isOpen) {
+      setDistrictDomain((prev) => prev || inferSuggestedSynergyDomain(canvasDomain));
+    } else {
       setEdupointUsername('');
       setEdupointPassword('');
       setApiPassword('');
       setOutcome(null);
       setIsVerifying(false);
+      setIsEndpointDropdownOpen(false);
     }
-  }, [isOpen]);
+  }, [isOpen, canvasDomain]);
 
   useEffect(() => {
     return () => {
@@ -73,6 +94,18 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
       setApiPassword('');
     };
   }, []);
+
+  const query = districtDomain.trim().toLowerCase();
+  const filteredEndpointOptions =
+    endpointShowAll || !query
+      ? SYNERGY_ENDPOINT_OPTIONS
+      : SYNERGY_ENDPOINT_OPTIONS.filter(
+          (opt) =>
+            opt.domain.toLowerCase().includes(query) ||
+            opt.label.toLowerCase().includes(query)
+        );
+  const displayedEndpointOptions =
+    filteredEndpointOptions.length > 0 ? filteredEndpointOptions : SYNERGY_ENDPOINT_OPTIONS;
 
   if (!isOpen) return null;
 
@@ -116,6 +149,10 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="studentvue-verify-title"
+      data-testid="studentvue-verify-modal"
       className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
       onClick={onClose}
     >
@@ -131,7 +168,9 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-900">Verify StudentVUE Account</h3>
+                <h3 id="studentvue-verify-title" className="text-sm font-bold text-slate-900">
+                  Verify StudentVUE Account
+                </h3>
                 <span className="text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">
                   Experimental
                 </span>
@@ -143,6 +182,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
           </div>
           <button
             type="button"
+            aria-label="Close StudentVUE Verification"
             onClick={onClose}
             className="text-slate-400 hover:text-slate-600 p-1 hover:bg-slate-200/60 rounded-lg transition cursor-pointer"
           >
@@ -182,21 +222,101 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             </button>
           </div>
 
-          {/* District Domain */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              District Synergy Domain
+          {/* Synergy Endpoint Combo Box */}
+          <div ref={endpointComboboxRef}>
+            <label
+              htmlFor="synergy-endpoint-input"
+              className="block text-xs font-bold text-slate-700 mb-1"
+            >
+              Synergy Endpoint (District Domain)
             </label>
             <div className="relative">
-              <Globe className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+              <Globe className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
               <input
+                id="synergy-endpoint-input"
                 type="text"
-                placeholder="e.g. md-mcps-psv.edupoint.com or portal.sfusd.edu"
+                role="combobox"
+                aria-expanded={isEndpointDropdownOpen}
+                aria-controls="synergy-endpoint-listbox"
+                aria-autocomplete="list"
+                data-testid="synergy-endpoint-combobox"
+                placeholder="Select or enter e.g. md-mcps-psv.edupoint.com"
                 value={districtDomain}
-                onChange={(e) => setDistrictDomain(e.target.value)}
-                className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                onFocus={() => {
+                  setEndpointShowAll(true);
+                  setIsEndpointDropdownOpen(true);
+                }}
+                onChange={(e) => {
+                  setDistrictDomain(e.target.value);
+                  setEndpointShowAll(false);
+                  setIsEndpointDropdownOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setIsEndpointDropdownOpen(false);
+                  } else if (e.key === 'ArrowDown') {
+                    setEndpointShowAll(true);
+                    setIsEndpointDropdownOpen(true);
+                  }
+                }}
+                className="w-full text-xs pl-8 pr-8 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                 required
               />
+              <button
+                type="button"
+                aria-label="Toggle Synergy endpoints"
+                data-testid="synergy-endpoint-toggle"
+                onClick={() => {
+                  setEndpointShowAll(true);
+                  setIsEndpointDropdownOpen((prev) => !prev);
+                }}
+                className="absolute right-2 top-1.5 p-1 text-slate-400 hover:text-indigo-600 rounded-lg transition cursor-pointer"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${
+                    isEndpointDropdownOpen ? 'rotate-180 text-indigo-600' : ''
+                  }`}
+                />
+              </button>
+
+              {isEndpointDropdownOpen && (
+                <div
+                  id="synergy-endpoint-listbox"
+                  role="listbox"
+                  aria-label="Known Synergy endpoints"
+                  className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl py-1 z-50 max-h-52 overflow-y-auto animate-fadeIn"
+                >
+                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                    Known District Synergy Endpoints (or type custom)
+                  </div>
+                  {displayedEndpointOptions.map((opt) => {
+                    const isSelected = districtDomain.trim().toLowerCase() === opt.domain.toLowerCase();
+                    return (
+                      <button
+                        key={opt.domain}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => {
+                          setDistrictDomain(opt.domain);
+                          setIsEndpointDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 hover:bg-indigo-50/70 transition cursor-pointer ${
+                          isSelected ? 'bg-indigo-50/90' : ''
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-slate-800 font-mono truncate">
+                            {opt.domain}
+                          </div>
+                          <div className="text-[10px] text-slate-500 truncate">{opt.label}</div>
+                        </div>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -310,82 +430,94 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 space-y-1">
               <div className="flex items-center gap-2 font-bold">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-                <span>Verification Failed ({outcome.stage})</span>
+                <span>Verification Failed ({String(outcome.stage || 'error')})</span>
               </div>
-              <p className="text-[11px] text-red-700 leading-relaxed">{outcome.error}</p>
+              <p className="text-[11px] text-red-700 leading-relaxed">
+                {typeof outcome.error === 'string'
+                  ? outcome.error
+                  : 'Unexpected Synergy error. Your Canvas session was not affected.'}
+              </p>
             </div>
           )}
 
-          {outcome && outcome.ok && (
-            <div
-              className={`p-4 rounded-xl border space-y-3 ${
-                outcome.comparison.matched
-                  ? 'bg-emerald-50/80 border-emerald-200'
-                  : 'bg-amber-50/80 border-amber-200'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {outcome.comparison.matched ? (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                ) : (
-                  <XCircle className="w-5 h-5 text-amber-600 shrink-0" />
+          {outcome && outcome.ok && outcome.comparison && (() => {
+            const cmp = outcome.comparison;
+            const matchReasons = Array.isArray(cmp.matchReasons) ? cmp.matchReasons : [];
+            const mismatchReasons = Array.isArray(cmp.mismatchReasons) ? cmp.mismatchReasons : [];
+            const warnings = Array.isArray(cmp.warnings) ? cmp.warnings : [];
+            const canvasProf = cmp.canvasProfile || {};
+            const svProf = cmp.studentVueProfile || {};
+
+            return (
+              <div
+                className={`p-4 rounded-xl border space-y-3 ${
+                  cmp.matched
+                    ? 'bg-emerald-50/80 border-emerald-200'
+                    : 'bg-amber-50/80 border-amber-200'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {cmp.matched ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  ) : (
+                    <XCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                  )}
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">
+                      {cmp.matched
+                        ? `Accounts Match (${cmp.confidence} confidence)`
+                        : 'Account Mismatch Detected'}
+                    </div>
+                    <div className="text-[11px] text-slate-600">
+                      {matchReasons.join(' • ') || mismatchReasons.join(' • ') || 'Comparison completed.'}
+                    </div>
+                  </div>
+                </div>
+
+                {mismatchReasons.length > 0 && cmp.matched && (
+                  <div className="text-[11px] text-amber-800 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{mismatchReasons.join(' • ')}</span>
+                  </div>
                 )}
-                <div>
-                  <div className="text-xs font-bold text-slate-900">
-                    {outcome.comparison.matched
-                      ? `Accounts Match (${outcome.comparison.confidence} confidence)`
-                      : 'Account Mismatch Detected'}
+
+                {warnings.length > 0 && (
+                  <div className="text-[11px] text-slate-600 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    <span>{warnings.join(' ')}</span>
                   </div>
-                  <div className="text-[11px] text-slate-600">
-                    {outcome.comparison.matchReasons.join(' • ') ||
-                      outcome.comparison.mismatchReasons.join(' • ')}
+                )}
+
+                {/* Side-by-side profile details */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-200/70 text-[11px]">
+                  <div className="bg-white/80 rounded-lg p-2.5 border border-slate-200/70 space-y-1">
+                    <div className="font-bold text-slate-700">Canvas Profile</div>
+                    <div className="text-slate-600 truncate">
+                      Name: {canvasProf.name || '—'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      ID: {canvasProf.sisUserId || canvasProf.loginId || '—'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      Email: {canvasProf.email || '—'}
+                    </div>
+                  </div>
+                  <div className="bg-white/80 rounded-lg p-2.5 border border-slate-200/70 space-y-1">
+                    <div className="font-bold text-slate-700">StudentVUE Profile</div>
+                    <div className="text-slate-600 truncate">
+                      Name: {svProf.name || '—'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      PermID: {svProf.permId || '—'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      School: {svProf.school || '—'}
+                    </div>
                   </div>
                 </div>
               </div>
-
-              {outcome.comparison.mismatchReasons.length > 0 && outcome.comparison.matched && (
-                <div className="text-[11px] text-amber-800 flex items-start gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>{outcome.comparison.mismatchReasons.join(' • ')}</span>
-                </div>
-              )}
-
-              {outcome.comparison.warnings.length > 0 && (
-                <div className="text-[11px] text-slate-600 flex items-start gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                  <span>{outcome.comparison.warnings.join(' ')}</span>
-                </div>
-              )}
-
-              {/* Side-by-side profile details */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-slate-200/70 text-[11px]">
-                <div className="bg-white/80 rounded-lg p-2.5 border border-slate-200/70 space-y-1">
-                  <div className="font-bold text-slate-700">Canvas Profile</div>
-                  <div className="text-slate-600 truncate">
-                    Name: {outcome.comparison.canvasProfile.name || '—'}
-                  </div>
-                  <div className="text-slate-600 truncate">
-                    ID: {outcome.comparison.canvasProfile.sisUserId || outcome.comparison.canvasProfile.loginId || '—'}
-                  </div>
-                  <div className="text-slate-600 truncate">
-                    Email: {outcome.comparison.canvasProfile.email || '—'}
-                  </div>
-                </div>
-                <div className="bg-white/80 rounded-lg p-2.5 border border-slate-200/70 space-y-1">
-                  <div className="font-bold text-slate-700">StudentVUE Profile</div>
-                  <div className="text-slate-600 truncate">
-                    Name: {outcome.comparison.studentVueProfile.name || '—'}
-                  </div>
-                  <div className="text-slate-600 truncate">
-                    PermID: {outcome.comparison.studentVueProfile.permId || '—'}
-                  </div>
-                  <div className="text-slate-600 truncate">
-                    School: {outcome.comparison.studentVueProfile.school || '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Footer Buttons */}
           <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">

@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { CourseData, ALL_COURSES_ID, StudentProfile } from '../../types';
+import { CourseData, ALL_COURSES_ID } from '../../types';
 import { BookOpen, PanelLeftOpen, PanelLeftClose, Layers, Bug, LogOut, Check, CheckSquare, Square, Palette, GripVertical, X } from 'lucide-react';
 import { computeCourseAbbreviations, pruneCourseTitle } from '../../utils/courseAbbreviations';
-import { StudentSwitcher } from './StudentSwitcher';
 import { CourseCustomizationModal } from './CourseCustomizationModal';
 import { CourseCustomization } from '../../services/courseCustomization';
 import { getGradeStyle } from '../../services/gradeScale';
@@ -26,13 +25,6 @@ interface SidebarProps {
   onLogout: () => void;
   onDebug: () => void;
   showScores?: boolean;
-  currentStudentId?: string;
-  currentStudentName?: string;
-  currentDomain?: string;
-  canvasToken?: string;
-  useProxy?: boolean;
-  onSwitchStudent?: (student: StudentProfile) => void;
-  onRenameStudent?: (newName: string) => void;
   courseCustomizations?: Record<number, CourseCustomization>;
   onSaveCustomization?: (courseId: number, custom: CourseCustomization) => void;
   courseOrder?: number[];
@@ -59,13 +51,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   onDebug,
   showScores = true,
-  currentStudentId,
-  currentStudentName,
-  currentDomain,
-  canvasToken,
-  useProxy = true,
-  onSwitchStudent,
-  onRenameStudent,
   courseCustomizations = {},
   onSaveCustomization,
   courseOrder = [],
@@ -200,31 +185,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
-        {/* Reserved Student Profile Spot in Top-Left Corner */}
-        {onSwitchStudent && (
-          <div className={`px-3 py-2.5 border-b border-slate-200/80 bg-slate-50/80 flex items-center ${isEffectiveCollapsed ? 'justify-center' : 'justify-between gap-1'} shrink-0`}>
-            <StudentSwitcher
-              currentStudentId={currentStudentId}
-              currentStudentName={currentStudentName}
-              currentDomain={currentDomain}
-              canvasToken={canvasToken}
-              useProxy={useProxy}
-              onSwitchStudent={onSwitchStudent}
-              onRenameStudent={onRenameStudent}
-              compact={isEffectiveCollapsed}
-            />
-            {!isEffectiveCollapsed && (
-              <button 
-                  onClick={() => onToggleCollapse(!isCollapsed)}
-                  className="hidden md:block text-slate-400 hover:text-slate-600 transition p-1 hover:bg-slate-200/60 rounded cursor-pointer shrink-0"
-                  title="Collapse Sidebar"
-              >
-                  <PanelLeftClose className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        )}
-
         <div className={`p-4 border-b border-slate-100 flex flex-col shrink-0 ${isEffectiveCollapsed ? 'items-center justify-center gap-3' : ''}`}>
           <div className={`flex items-center ${isEffectiveCollapsed ? 'justify-center' : 'justify-between'} w-full`}>
               {!isEffectiveCollapsed && (
@@ -253,15 +213,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Palette className="w-4 h-4" />
                 </button>
               )}
-              {(!onSwitchStudent || isEffectiveCollapsed) && (
-                <button 
-                    onClick={() => onToggleCollapse(!isCollapsed)}
-                    className="hidden md:block text-slate-400 hover:text-slate-600 transition p-1 hover:bg-slate-100 rounded cursor-pointer"
-                    title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-                >
-                    {isCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
-                </button>
-              )}
+              <button 
+                  onClick={() => onToggleCollapse(!isCollapsed)}
+                  className="hidden md:block text-slate-400 hover:text-slate-600 transition p-1 hover:bg-slate-100 rounded cursor-pointer"
+                  title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+              >
+                  {isCollapsed ? <PanelLeftOpen className="w-5 h-5" /> : <PanelLeftClose className="w-5 h-5" />}
+              </button>
           </div>
 
         {!isEffectiveCollapsed && (

@@ -5,6 +5,8 @@ interface Props {
   children: ReactNode;
   fallbackTitle?: string;
   onReset?: () => void;
+  resetLabel?: string;
+  modalOverlay?: boolean;
   key?: React.Key;
 }
 
@@ -43,8 +45,8 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
-      return (
-        <div className="bg-red-50/80 border border-red-200 rounded-2xl p-6 text-center my-4 animate-fadeIn">
+      const card = (
+        <div className="bg-red-50/95 border border-red-200 rounded-2xl p-6 text-center my-4 animate-fadeIn max-w-md w-full shadow-lg">
           <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
           <h3 className="font-bold text-slate-800 text-sm">
             {this.props.fallbackTitle || 'Unable to display this view'}
@@ -62,11 +64,25 @@ export class ErrorBoundary extends React.Component<Props, State> {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-xs transition cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry View</span>
+              <span>{this.props.resetLabel || 'Retry View'}</span>
             </button>
           </div>
         </div>
       );
+
+      if (this.props.modalOverlay) {
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4"
+          >
+            {card}
+          </div>
+        );
+      }
+
+      return card;
     }
 
     return this.props.children;

@@ -96,9 +96,14 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
     ? COLOR_CLASSES[activeStudent.color] 
     : COLOR_CLASSES.blue;
 
+  const activeSelectedId = currentStudentId || activeStudent?.id;
+
   const handleSelectStudent = (student: StudentProfile) => {
-    onSwitchStudent(student);
     setIsOpen(false);
+    if (activeSelectedId && student.id === activeSelectedId) {
+      return;
+    }
+    onSwitchStudent(student);
   };
 
   const handleOpenAddModal = () => {
@@ -233,7 +238,7 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
         </form>
       ) : (
         <div className={`flex items-center rounded-xl border transition-all bg-white border-slate-200/90 shadow-2xs hover:border-blue-300 hover:shadow-xs text-slate-800 ${
-          compact ? 'p-1' : 'pl-2 pr-1 py-1 max-w-[190px]'
+          compact ? 'p-1' : 'pl-2 pr-1 py-1 max-w-[155px] sm:max-w-[190px]'
         }`}>
           <button
             type="button"
@@ -271,7 +276,7 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className={`absolute ${compact ? 'left-full top-0 ml-2' : 'left-0 top-full mt-1.5'} w-72 bg-white rounded-2xl shadow-xl border border-slate-200/80 py-2 z-50 animate-fadeIn`}>
+        <div className={`absolute ${compact ? 'left-full top-0 ml-2' : 'left-0 top-full mt-1.5'} w-64 sm:w-72 bg-white rounded-2xl shadow-xl border border-slate-200/80 py-2 z-50 animate-fadeIn`}>
           <div className="px-3.5 py-2 border-b border-slate-100 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 uppercase tracking-wider">
               <Users className="w-3.5 h-3.5 text-blue-600" />
@@ -308,14 +313,16 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
               </div>
             ) : (
               students.map(student => {
-                const isSelected = student.id === activeStudent?.id;
+                const isSelected = Boolean(activeSelectedId && student.id === activeSelectedId);
                 const c = COLOR_CLASSES[student.color || 'blue'] || COLOR_CLASSES.blue;
                 return (
                   <div
                     key={student.id}
+                    data-testid={`student-switcher-row-${student.id}`}
+                    aria-current={isSelected ? 'true' : undefined}
                     onClick={() => handleSelectStudent(student)}
-                    className={`flex items-center justify-between px-3.5 py-2.5 transition cursor-pointer group ${
-                      isSelected ? 'bg-blue-50/70 text-blue-900' : 'hover:bg-slate-50 text-slate-700'
+                    className={`flex items-center justify-between px-3.5 py-2.5 transition group ${
+                      isSelected ? 'bg-blue-50/70 text-blue-900 cursor-default' : 'hover:bg-slate-50 text-slate-700 cursor-pointer'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -386,8 +393,27 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
             )}
           </div>
 
-          {/* Add Student Button */}
-          <div className="pt-1.5 border-t border-slate-100 px-2">
+          {/* StudentVUE Verification & Add Student Actions */}
+          <div className="pt-1.5 border-t border-slate-100 px-2 space-y-1.5">
+            <button
+              type="button"
+              data-testid="student-switcher-verify-studentvue"
+              onClick={() => {
+                setIsOpen(false);
+                setIsStudentVueModalOpen(true);
+              }}
+              className="w-full flex items-center justify-between gap-2 py-2 px-3 text-xs font-bold text-indigo-700 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100/80 rounded-xl transition cursor-pointer"
+              title="Verify that Synergy StudentVUE matches this Canvas student profile"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span className="truncate">Verify StudentVUE</span>
+              </span>
+              <span className="text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded shrink-0">
+                Exp
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={handleOpenAddModal}
@@ -528,20 +554,24 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
         </div>
       )}
 
-      {/* Experimental StudentVUE Verification Modal (isolated via ErrorBoundary) */}
-      <ErrorBoundary
-        fallbackTitle="StudentVUE Verification Unavailable"
-        onReset={() => setIsStudentVueModalOpen(false)}
-      >
-        <StudentVueVerifyModal
-          isOpen={isStudentVueModalOpen}
-          onClose={() => setIsStudentVueModalOpen(false)}
-          studentName={displayName}
-          canvasDomain={currentDomain || activeStudent?.domain}
-          canvasToken={canvasToken || activeStudent?.apiKey}
-          useProxy={useProxy ?? activeStudent?.useProxy ?? true}
-        />
-      </ErrorBoundary>
+      {/* Experimental StudentVUE Verification Modal (isolated via ErrorBoundary modal overlay) */}
+      {isStudentVueModalOpen && (
+        <ErrorBoundary
+          fallbackTitle="StudentVUE Verification Unavailable"
+          resetLabel="Close"
+          modalOverlay
+          onReset={() => setIsStudentVueModalOpen(false)}
+        >
+          <StudentVueVerifyModal
+            isOpen={isStudentVueModalOpen}
+            onClose={() => setIsStudentVueModalOpen(false)}
+            studentName={displayName}
+            canvasDomain={currentDomain || activeStudent?.domain}
+            canvasToken={canvasToken || activeStudent?.apiKey}
+            useProxy={useProxy ?? activeStudent?.useProxy ?? true}
+          />
+        </ErrorBoundary>
+      )}
     </div>
   );
 };

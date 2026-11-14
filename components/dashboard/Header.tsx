@@ -56,6 +56,8 @@ interface HeaderProps {
   currentStudentId?: string;
   currentStudentName?: string;
   currentDomain?: string;
+  canvasToken?: string;
+  useProxy?: boolean;
   onSwitchStudent?: (student: StudentProfile) => void;
   onRenameStudent?: (newName: string) => void;
   onOpenMobileMenu?: () => void;
@@ -102,6 +104,8 @@ export const Header: React.FC<HeaderProps> = ({
   currentStudentId,
   currentStudentName,
   currentDomain,
+  canvasToken,
+  useProxy = true,
   onSwitchStudent,
   onRenameStudent,
   onOpenMobileMenu,
@@ -134,9 +138,12 @@ export const Header: React.FC<HeaderProps> = ({
   const totalActiveControls = activeDisplayCount + activeFilterCount;
 
   return (
-    <header className="bg-white border-b border-slate-200 min-h-14 flex items-center justify-between px-3 sm:px-6 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shrink-0 gap-2 md:gap-4 relative z-30 shadow-2xs">
-      {/* Top Left: Mobile Menu + Merged Student Controller (mobile) / App Brand (desktop) */}
-      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink-0" data-tutorial="header-brand">
+    <header
+      data-testid="dashboard-header"
+      className="bg-white border-b border-slate-200 px-3 sm:px-6 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shrink-0 relative z-30 shadow-2xs flex flex-wrap md:flex-nowrap items-center justify-between gap-x-2 gap-y-2 md:gap-4"
+    >
+      {/* Row 1 Left (Desktop & Mobile): Mobile Hamburger + App Tile + Single Student Info Widget */}
+      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 shrink md:shrink-0 order-1" data-tutorial="header-brand">
         {/* Mobile Sidebar Hamburger Toggle */}
         <button
           type="button"
@@ -148,22 +155,24 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-5 h-5" />
         </button>
 
-        <div className="hidden md:flex items-center gap-2">
-          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs sm:text-sm shadow-2xs">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-xs sm:text-sm shadow-2xs shrink-0">
             V
           </div>
-          <span className="font-bold text-sm sm:text-base tracking-tight text-slate-900">
+          <span className="hidden sm:inline font-bold text-sm sm:text-base tracking-tight text-slate-900">
             Velm
           </span>
         </div>
 
-        {/* Merged Top-Left Student Controller on Mobile */}
+        {/* Single Always-Visible Student Info / Switcher Widget (not hidden in Sidebar) */}
         {onSwitchStudent && (
-          <div className="md:hidden">
+          <div data-testid="header-student-switcher" className="min-w-0">
             <StudentSwitcher
               currentStudentId={currentStudentId}
               currentStudentName={currentStudentName}
               currentDomain={currentDomain}
+              canvasToken={canvasToken}
+              useProxy={useProxy}
               onSwitchStudent={onSwitchStudent}
               onRenameStudent={onRenameStudent}
             />
@@ -171,8 +180,11 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      {/* Variable Center: Primary Navigation Tabs (horizontally scrollable on small screens) */}
-      <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full justify-center flex-1 py-0.5 custom-scrollbar" data-tutorial="nav-tabs-group">
+      {/* Dedicated Menu Bar Row on Mobile (order-3 w-full); Centered Nav Tabs on Desktop (md:order-2) */}
+      <div
+        className="order-3 md:order-2 w-full md:w-auto md:flex-1 flex items-center justify-between sm:justify-center gap-1.5 sm:gap-2 overflow-x-auto max-w-full pt-1.5 md:pt-0 border-t border-slate-100 md:border-t-0 custom-scrollbar"
+        data-tutorial="nav-tabs-group"
+      >
         <div className="flex bg-slate-100 rounded-lg p-0.5 shrink-0 overflow-x-auto">
           <button 
             data-tutorial="nav-tab-overview"
@@ -229,8 +241,8 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      {/* Top Right: Global Controls */}
-      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      {/* Row 1 Right: Global Controls (order-2 md:order-3) */}
+      <div className="order-2 md:order-3 flex items-center gap-1.5 sm:gap-2 shrink-0">
 
         {/* Mobile-only All-Settings Drawer Button */}
         <div className="flex md:hidden items-center gap-1 shrink-0">

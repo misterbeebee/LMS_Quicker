@@ -173,12 +173,26 @@ const App: React.FC = () => {
   };
 
   const handleSwitchStudent = async (student: StudentProfile) => {
-    sessionEpochRef.current += 1;
-    const currentEpoch = sessionEpochRef.current;
-
     const cleanDomain = sanitizeCanvasDomain(student.domain);
     const cleanToken = sanitizeCanvasToken(student.apiKey);
     const isDemoProfile = cleanDomain.toUpperCase() === 'DEMO' || cleanToken.toUpperCase() === 'DEMO';
+
+    const isSameActiveStudent = Boolean(
+      student.id &&
+      state.currentStudentId &&
+      student.id === state.currentStudentId &&
+      !switchFailure &&
+      (isDemoProfile
+        ? state.canvasUrl === 'DEMO'
+        : cleanDomain === state.canvasUrl && cleanToken === state.apiKey)
+    );
+    if (isSameActiveStudent) {
+      return;
+    }
+
+    sessionEpochRef.current += 1;
+    const currentEpoch = sessionEpochRef.current;
+
     const previousActiveId = state.currentStudentId || getActiveStudentId();
 
     logger.info(`Switching active student to: ${student.name} (${cleanDomain || student.domain})`);
@@ -431,7 +445,7 @@ const App: React.FC = () => {
           )}
 
           <ErrorBoundary
-            fallbackTitle="Dashboard encounter issue"
+            fallbackTitle="Dashboard encountered an issue"
             onReset={() => handleLogout()}
           >
             <Dashboard 

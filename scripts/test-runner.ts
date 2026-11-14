@@ -874,9 +874,31 @@ export async function runIntegrationTestSuite(options?: { domain?: string; token
   assert(!headerSrc.includes('sticky top-0') && headerSrc.includes('shrink-0') && headerSrc.includes('env(safe-area-inset-top)'), 'Header uses non-sticky shrink-0 bar with safe-area padding for Safari');
   assert(indexHtmlSrc.includes('h-dvh') && indexCssSrc.includes('100dvh'), 'index.html and index.css use dynamic viewport height (dvh)');
 
-  // Test 4: Student "My name" rename button merged into top-left StudentSwitcher
-  assert(studentSwitcherSrc.includes('onRenameStudent') && studentSwitcherSrc.includes('setIsEditingName(true)'), 'StudentSwitcher integrates inline My Name editing directly in top-left controller');
-  assert(!headerSrc.includes('setIsEditingStudentName') && headerSrc.includes('<StudentSwitcher'), 'Header delegates student profile & rename to top-left StudentSwitcher without duplicate top-right button');
+  // Test 4: Single always-visible StudentSwitcher in Header (not hidden in Sidebar) + dedicated mobile nav bar row + StudentVUE combobox & error isolation
+  const studentVueModalSrc = fs.readFileSync(path.join(process.cwd(), 'components/dashboard/StudentVueVerifyModal.tsx'), 'utf-8');
+  const studentVueSvcSrc = fs.readFileSync(path.join(process.cwd(), 'services/studentvue.ts'), 'utf-8');
+  assert(
+    studentSwitcherSrc.includes('onRenameStudent') &&
+      studentSwitcherSrc.includes('setIsEditingName(true)') &&
+      studentSwitcherSrc.includes('setIsStudentVueModalOpen(true)') &&
+      studentSwitcherSrc.includes('modalOverlay') &&
+      studentSwitcherSrc.includes('if (activeSelectedId && student.id === activeSelectedId)') &&
+      studentVueModalSrc.includes('verifyStudentVueAccount') &&
+      studentVueModalSrc.includes('role="combobox"') &&
+      studentVueSvcSrc.includes('SYNERGY_ENDPOINT_OPTIONS') &&
+      studentVueSvcSrc.includes('md-mcps-psv.edupoint.com') &&
+      appSrc.includes('isSameActiveStudent') &&
+      appSrc.includes('Dashboard encountered an issue'),
+    'StudentSwitcher integrates inline rename, Synergy endpoint combobox, and crash-isolated StudentVUE verification'
+  );
+  assert(
+    !headerSrc.includes('setIsEditingStudentName') &&
+      headerSrc.includes('data-testid="header-student-switcher"') &&
+      headerSrc.includes('<StudentSwitcher') &&
+      !sidebarSrc.includes('<StudentSwitcher') &&
+      headerSrc.includes('order-3 md:order-2 w-full md:w-auto'),
+    'StudentSwitcher appears once in always-visible Header (not hidden in Sidebar) and mobile nav bar wraps onto its own row'
+  );
 
   // Test 5: Three color configurator sliders merged onto ONE continuous line
   const gradeModalSrc = fs.readFileSync(path.join(process.cwd(), 'components/dashboard/GradeThresholdModal.tsx'), 'utf-8');

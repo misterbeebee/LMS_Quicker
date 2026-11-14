@@ -56,6 +56,79 @@ export type StudentVueVerifyOutcome =
 
 const DEFAULT_TIMEOUT_MS = 20000;
 
+export interface SynergyEndpointOption {
+  domain: string;
+  label: string;
+}
+
+export const SYNERGY_ENDPOINT_OPTIONS: SynergyEndpointOption[] = [
+  { domain: 'md-mcps-psv.edupoint.com', label: 'Montgomery County Public Schools (MD)' },
+  { domain: 'portal.sfusd.edu', label: 'San Francisco Unified (CA)' },
+  { domain: 'sisstudent.fcps.edu', label: 'Fairfax County Public Schools (VA)' },
+  { domain: 'or-psd-psv.edupoint.com', label: 'Portland Public Schools (OR)' },
+  { domain: 'studentvue.beaverton.k12.or.us', label: 'Beaverton School District (OR)' },
+];
+
+/**
+ * Extract clean Synergy district hostname from URL, path, or bare host input.
+ */
+export function normalizeSynergyDomain(raw?: string): string {
+  if (typeof raw !== 'string') return '';
+  return raw
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .split('/')[0]
+    .trim();
+}
+
+/**
+ * Suggest a plausible Synergy endpoint based on the active Canvas domain when recognizable.
+ */
+export function inferSuggestedSynergyDomain(canvasDomain?: string): string {
+  if (typeof canvasDomain !== 'string') return '';
+  const lower = canvasDomain.toLowerCase();
+  if (lower.includes('mcpsmd')) return 'md-mcps-psv.edupoint.com';
+  if (lower.includes('sfusd')) return 'portal.sfusd.edu';
+  if (lower.includes('fcps')) return 'sisstudent.fcps.edu';
+  if (lower.includes('pps.net')) return 'or-psd-psv.edupoint.com';
+  if (lower.includes('beaverton')) return 'studentvue.beaverton.k12.or.us';
+  return '';
+}
+
+/**
+ * Safely convert unknown API/FastAPI/Synergy error payloads into readable strings without throwing or returning "[object Object]".
+ */
+export function formatApiErrorDetail(detail: unknown, fallbackStatus?: number): string {
+  if (typeof detail === 'string') {
+    const trimmed = detail.trim();
+    if (trimmed) return trimmed;
+  } else if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item === 'object') {
+          const rec = item as Record<string, unknown>;
+          const loc = Array.isArray(rec.loc) ? rec.loc.filter((l) => l !== 'body').join('.') : '';
+          const msg = typeof rec.msg === 'string' ? rec.msg : JSON.stringify(item);
+          return loc ? `${loc}: ${msg}` : msg;
+        }
+        return String(item ?? '');
+      })
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join('; ');
+  } else if (detail && typeof detail === 'object') {
+    const rec = detail as Record<string, unknown>;
+    const candidate = rec.message ?? rec.error ?? rec.detail ?? rec.ErrorMessage;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    try {
+      return JSON.stringify(detail).slice(0, 300);
+    } catch {
+      // ignore stringify errors on weird objects
+    }
+  }
+  return fallbackStatus ? `HTTP ${fallbackStatus}` : 'Unknown server error';
+}
+
 /**
  * Unwrap badgerfish XML-to-JSON values like { "$": "John Doe" } or plain strings.
  */
@@ -67,7 +140,7 @@ function unwrapBadgerfish(val: unknown): string | undefined {
   }
   if (typeof val === 'object' && '$' in (val as Record<string, unknown>)) {
     const inner = (val as Record<string, unknown>)['$'];
-    if (inner !== null && inner !== undefined) {
+    if (typeof inner === 'string' || typeof inner === 'number') {
       const s = String(inner).trim();
       return s.length > 0 ? s : undefined;
     }
@@ -79,7 +152,7 @@ function unwrapBadgerfish(val: unknown): string | undefined {
  * Normalize a person's name so "Doe, John" and "John Doe" compare cleanly.
  */
 function normalizeNameTokens(raw?: string): string[] {
-  if (!raw) return [];
+  if (typeof raw !== 'string') return [];
   // Remove parenthetical nicknames/pronouns and punctuation
   const cleaned = raw
     .replace(/\([^)]*\)/g, ' ')
@@ -134,17 +207,21 @@ async function fetchWithTimeout(
 }
 
 async function safeParseJson(res: Response): Promise<any> {
-  const text = await res.text();
-  if (!text) return {};
   try {
-    return JSON.parse(text);
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { detail: text.slice(0, 300) };
+    }
   } catch {
-    return { detail: text.slice(0, 300) };
+    return {};
   }
 }
 
 function buildCanvasUrl(domain: string, endpointPath: string, useProxy: boolean): string {
-  const cleanDomain = domain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+  const cleanDomain = (typeof domain === 'string' ? domain : '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
   const cleanPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
   const targetUrl = `https://${cleanDomain}${cleanPath}`;
   if (useProxy) {
@@ -241,10 +318,10 @@ export function compareStudentProfiles(
   const warnings: string[] = [];
 
   // 1. Compare Names
-  const canvasNames = [canvasProfile.name, canvasProfile.shortName, canvasProfile.sortableName].filter(
-    (n): n is string => Boolean(n && n.trim())
+  const canvasNames = [canvasProfile?.name, canvasProfile?.shortName, canvasProfile?.sortableName].filter(
+    (n): n is string => typeof n === 'string' && Boolean(n.trim())
   );
-  const svName = studentVueProfile.name;
+  const svName = typeof studentVueProfile?.name === 'string' ? studentVueProfile.name : undefined;
 
   if (svName && canvasNames.length > 0) {
     const anyNameMatched = canvasNames.some((cn) => namesMatch(cn, svName));
@@ -260,9 +337,9 @@ export function compareStudentProfiles(
   }
 
   // 2. Compare Student ID (PermID vs sis_user_id / login_id)
-  const svPermId = studentVueProfile.permId?.trim();
-  const canvasIds = [canvasProfile.sisUserId, canvasProfile.loginId]
-    .filter((v): v is string => Boolean(v && v.trim()))
+  const svPermId = typeof studentVueProfile?.permId === 'string' ? studentVueProfile.permId.trim() : '';
+  const canvasIds = [canvasProfile?.sisUserId, canvasProfile?.loginId]
+    .filter((v): v is string => typeof v === 'string' && Boolean(v.trim()))
     .map((v) => v.trim());
 
   if (svPermId && canvasIds.length > 0) {
@@ -281,8 +358,8 @@ export function compareStudentProfiles(
   }
 
   // 3. Compare Email (if available in both)
-  const svEmail = studentVueProfile.email?.trim().toLowerCase();
-  const canvasEmail = canvasProfile.email?.trim().toLowerCase();
+  const svEmail = typeof studentVueProfile?.email === 'string' ? studentVueProfile.email.trim().toLowerCase() : '';
+  const canvasEmail = typeof canvasProfile?.email === 'string' ? canvasProfile.email.trim().toLowerCase() : '';
   if (svEmail && canvasEmail) {
     if (svEmail === canvasEmail) {
       matchReasons.push(`Email matches (${svEmail})`);
@@ -305,8 +382,8 @@ export function compareStudentProfiles(
     matchReasons,
     mismatchReasons,
     warnings,
-    canvasProfile,
-    studentVueProfile,
+    canvasProfile: canvasProfile || {},
+    studentVueProfile: studentVueProfile || {},
     checkedAt: new Date().toISOString(),
   };
 }
@@ -325,7 +402,7 @@ export async function verifyStudentVueAccount(
   let stage: VerifyStage = 'config';
 
   try {
-    const baseUrl = req.apiServerUrl.trim().replace(/\/+$/, '');
+    const baseUrl = (typeof req?.apiServerUrl === 'string' ? req.apiServerUrl : '').trim().replace(/\/+$/, '');
     if (!baseUrl || (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://'))) {
       return {
         ok: false,
@@ -333,22 +410,28 @@ export async function verifyStudentVueAccount(
         error: 'API server URL must start with http:// or https://.',
       };
     }
-    if (!req.apiUsername.trim() || !req.apiPassword) {
+    const apiUsername = (typeof req?.apiUsername === 'string' ? req.apiUsername : '').trim();
+    const apiPassword = typeof req?.apiPassword === 'string' ? req.apiPassword : '';
+    if (!apiUsername || !apiPassword) {
       return {
         ok: false,
         stage: 'config',
         error: 'API server username and password are required.',
       };
     }
-    if (!req.districtDomain.trim() || !req.edupointUsername.trim() || !req.edupointPassword) {
+
+    const districtDomain = normalizeSynergyDomain(req?.districtDomain);
+    const edupointUsername = (typeof req?.edupointUsername === 'string' ? req.edupointUsername : '').trim();
+    const edupointPassword = typeof req?.edupointPassword === 'string' ? req.edupointPassword : '';
+    if (!districtDomain || !edupointUsername || !edupointPassword) {
       return {
         ok: false,
         stage: 'config',
-        error: 'District domain, StudentVUE username, and password are required.',
+        error: 'Synergy endpoint domain, username, and password are required.',
       };
     }
 
-    logger.info(`[StudentVUE Verify] Starting verification against ${baseUrl} (district: ${req.districtDomain.trim()})`);
+    logger.info(`[StudentVUE Verify] Starting verification against ${baseUrl} (district: ${districtDomain})`);
 
     // Step 1: Fetch Canvas profile for comparison
     stage = 'canvas_profile';
@@ -371,8 +454,8 @@ export async function verifyStudentVueAccount(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: req.apiUsername.trim(),
-          password: req.apiPassword,
+          username: apiUsername,
+          password: apiPassword,
         }),
       });
     } catch (netErr: any) {
@@ -385,8 +468,8 @@ export async function verifyStudentVueAccount(
     }
 
     const tokenData = await safeParseJson(tokenRes);
-    if (!tokenRes.ok || !tokenData?.access_token) {
-      const detail = tokenData?.detail || `HTTP ${tokenRes.status}`;
+    if (!tokenRes.ok || typeof tokenData?.access_token !== 'string' || !tokenData.access_token) {
+      const detail = formatApiErrorDetail(tokenData?.detail ?? tokenData, tokenRes.status);
       logger.warn('[StudentVUE Verify] API server authentication failed', detail);
       return {
         ok: false,
@@ -407,9 +490,9 @@ export async function verifyStudentVueAccount(
           Authorization: `Bearer ${bearerToken}`,
         },
         body: JSON.stringify({
-          username: req.edupointUsername.trim(),
-          password: req.edupointPassword,
-          district_domain: req.districtDomain.trim(),
+          username: edupointUsername,
+          password: edupointPassword,
+          district_domain: districtDomain,
           is_parent: Boolean(req.isParent),
         }),
       });
@@ -423,8 +506,8 @@ export async function verifyStudentVueAccount(
     }
 
     const sessionData = await safeParseJson(sessionRes);
-    if (!sessionRes.ok || !sessionData?.edupoint_session) {
-      const detail = sessionData?.detail || `HTTP ${sessionRes.status}`;
+    if (!sessionRes.ok || typeof sessionData?.edupoint_session !== 'string' || !sessionData.edupoint_session) {
+      const detail = formatApiErrorDetail(sessionData?.detail ?? sessionData, sessionRes.status);
       logger.warn('[StudentVUE Verify] StudentVUE login failed', detail);
       return {
         ok: false,
@@ -457,8 +540,8 @@ export async function verifyStudentVueAccount(
     }
 
     const infoJson = await safeParseJson(infoRes);
-    if (!infoRes.ok || !infoJson?.data) {
-      const detail = infoJson?.detail || `HTTP ${infoRes.status}`;
+    if (!infoRes.ok || !infoJson?.data || typeof infoJson.data !== 'object') {
+      const detail = formatApiErrorDetail(infoJson?.detail ?? infoJson, infoRes.status);
       logger.warn('[StudentVUE Verify] StudentInfo fetch returned error', detail);
       return {
         ok: false,
@@ -467,7 +550,37 @@ export async function verifyStudentVueAccount(
       };
     }
 
-    const rawInfo = infoJson.data?.StudentInfo || infoJson.data || {};
+    const rawData = infoJson.data as Record<string, unknown>;
+    const rtError = rawData.RT_ERROR as Record<string, unknown> | undefined;
+    if (rtError) {
+      const soapErr =
+        unwrapBadgerfish(rtError) ||
+        formatApiErrorDetail(rtError['@ERROR_MESSAGE'] ?? rtError['@ErrorMessage'] ?? rtError, infoRes.status);
+      logger.warn('[StudentVUE Verify] Synergy RT_ERROR payload received', soapErr);
+      return {
+        ok: false,
+        stage: 'student_info',
+        error: `Synergy returned an error: ${soapErr}`,
+      };
+    }
+
+    const rawInfoCandidate = rawData.StudentInfo ?? rawData;
+    const rawInfo = (
+      rawInfoCandidate && typeof rawInfoCandidate === 'object' ? rawInfoCandidate : {}
+    ) as Record<string, unknown>;
+
+    const portalError =
+      (typeof rawInfo['@ErrorMessage'] === 'string' && rawInfo['@ErrorMessage'].trim()) ||
+      (typeof rawInfo.ErrorMessage === 'string' && rawInfo.ErrorMessage.trim());
+    if (portalError) {
+      logger.warn('[StudentVUE Verify] Synergy StudentInfo error message', portalError);
+      return {
+        ok: false,
+        stage: 'student_info',
+        error: `Synergy returned an error: ${portalError}`,
+      };
+    }
+
     const studentVueProfile: StudentVueProfileSummary = {
       name:
         unwrapBadgerfish(rawInfo.FormattedName) ||

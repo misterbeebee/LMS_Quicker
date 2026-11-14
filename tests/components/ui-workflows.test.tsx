@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Login } from '../../components/Login';
 import { StudentSwitcher } from '../../components/dashboard/StudentSwitcher';
@@ -160,7 +160,14 @@ describe('StudentSwitcher workflows', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onRenameStudent).toHaveBeenCalledWith('Alicia');
 
-    // Open dropdown, trigger inline delete confirmation on inactive student Bob
+    // Clicking the currently active student row should close the dropdown cleanly WITHOUT calling onSwitchStudent
+    await user.click(screen.getByTitle(/Current Student:/i));
+    const activeRow = screen.getByTestId(`student-switcher-row-${s1.id}`);
+    expect(activeRow).toHaveAttribute('aria-current', 'true');
+    await user.click(activeRow);
+    expect(onSwitchStudent).not.toHaveBeenCalled();
+
+    // Re-open dropdown, trigger inline credential edit and delete confirmation on inactive student Bob
     await user.click(screen.getByTitle(/Current Student:/i));
     expect(screen.getByText('Bob')).toBeInTheDocument();
 
@@ -173,6 +180,95 @@ describe('StudentSwitcher workflows', () => {
     await user.click(screen.getByRole('button', { name: 'Remove' }));
     expect(screen.queryByText('Bob')).not.toBeInTheDocument();
     expect(s2.id).toBeTruthy();
+
+    // Verify StudentVUE button appears in dropdown and opens StudentVueVerifyModal
+    const svBtn = screen.getByTestId('student-switcher-verify-studentvue');
+    expect(svBtn).toHaveTextContent(/Verify StudentVUE/i);
+    await user.click(svBtn);
+
+    const svModal = await screen.findByTestId('studentvue-verify-modal');
+    expect(svModal).toHaveTextContent(/Verify StudentVUE Account/i);
+    expect(svModal).toHaveTextContent(/Alice/);
+
+    // Synergy endpoint combo box offers known plausible options including md-mcps-psv.edupoint.com
+    const endpointCombo = screen.getByTestId('synergy-endpoint-combobox') as HTMLInputElement;
+    expect(endpointCombo).toHaveAttribute('role', 'combobox');
+    await user.click(screen.getByTestId('synergy-endpoint-toggle'));
+    const listbox = await screen.findByRole('listbox', { name: /Known Synergy endpoints/i });
+    const mcpsOption = within(listbox).getByRole('option', { name: /md-mcps-psv\.edupoint\.com/i });
+    await user.click(mcpsOption);
+    expect(endpointCombo.value).toBe('md-mcps-psv.edupoint.com');
+
+    await user.click(screen.getByRole('button', { name: /Close StudentVUE Verification/i }));
+    expect(screen.queryByTestId('studentvue-verify-modal')).not.toBeInTheDocument();
+  });
+
+  it('renders only one StudentSwitcher widget in Dashboard inside Header (not hidden in Sidebar) with nav tabs on a dedicated mobile row and keeps Dashboard alive on Synergy error', async () => {
+    const user = userEvent.setup();
+    saveStudent({ name: 'Solo Student', domain: 'mcpsmd.instructure.com', apiKey: '1000~solo' });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Synergy connection refused'));
+
+    const { container } = render(
+      <Dashboard
+        data={[
+          {
+            course: { id: 101, name: 'AP Chemistry', course_code: 'CHEM101', is_favorite: true },
+            assignments: [],
+            modules: [],
+          },
+        ]}
+        apiKey="1000~solo"
+        canvasUrl="mcpsmd.instructure.com"
+        useProxy={true}
+        onLogout={vi.fn()}
+        onDebug={vi.fn()}
+        currentStudentId="solo_1"
+        currentStudentName="Solo Student"
+        onSwitchStudent={vi.fn()}
+        onRenameStudent={vi.fn()}
+      />
+    );
+
+    const switcherTriggers = await screen.findAllByTitle(/Current Student: Solo Student/i);
+    expect(switcherTriggers).toHaveLength(1);
+
+    const headerSwitcherContainer = screen.getByTestId('header-student-switcher');
+    expect(within(headerSwitcherContainer).getByTitle(/Current Student: Solo Student/i)).toBe(switcherTriggers[0]);
+
+    const sidebarEl = container.querySelector('[data-tutorial="sidebar-container"]') as HTMLElement;
+    expect(sidebarEl).toBeTruthy();
+    expect(within(sidebarEl).queryByTitle(/Current Student: Solo Student/i)).not.toBeInTheDocument();
+
+    // Mobile view puts nav tabs on their own full-width row separate from app tile + hamburger
+    const navTabsGroup = container.querySelector('[data-tutorial="nav-tabs-group"]') as HTMLElement;
+    expect(navTabsGroup).toBeTruthy();
+    expect(navTabsGroup.className).toContain('order-3');
+    expect(navTabsGroup.className).toContain('w-full');
+    expect(navTabsGroup.className).toContain('md:order-2');
+    expect(navTabsGroup.className).toContain('md:w-auto');
+
+    await user.click(switcherTriggers[0]);
+    const verifyBtn = screen.getByTestId('student-switcher-verify-studentvue');
+    expect(verifyBtn).toBeInTheDocument();
+    await user.click(verifyBtn);
+    const modal = await screen.findByTestId('studentvue-verify-modal');
+    expect(modal).toBeInTheDocument();
+
+    // Auto-suggested MCPS endpoint for mcpsmd.instructure.com
+    const combo = within(modal).getByTestId('synergy-endpoint-combobox') as HTMLInputElement;
+    expect(combo.value).toBe('md-mcps-psv.edupoint.com');
+
+    // Fill transient fields & submit under network failure -> error stays inside modal, Dashboard stays healthy!
+    await user.type(within(modal).getByPlaceholderText('Student ID / Username'), '12345');
+    await user.type(within(modal).getByPlaceholderText('Password (transient)'), 'pw');
+    await user.type(within(modal).getByPlaceholderText('e.g. alice'), 'api_u');
+    await user.type(within(modal).getByPlaceholderText('API user password'), 'api_p');
+    await user.click(within(modal).getByRole('button', { name: /Verify Account Match/i }));
+
+    expect(await within(modal).findByText(/Verification Failed/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'All Courses' })).toBeInTheDocument();
+    fetchSpy.mockRestore();
   });
 });
 
