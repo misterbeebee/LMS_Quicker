@@ -174,6 +174,37 @@ export function resolveSchoolviewBaseUrl(raw?: string): string {
 }
 
 /**
+ * Default schoolview-api base URL for UI modals.
+ * Uses VITE_SCHOOLVIEW_API_URL when explicitly set at build time, otherwise
+ * defaults to the same-origin Express reverse proxy (/api/studentvue).
+ */
+export function resolveDefaultSchoolviewApiUrl(): string {
+  const envUrl =
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCHOOLVIEW_API_URL) || '';
+  if (typeof envUrl === 'string' && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+  return '/api/studentvue';
+}
+
+/**
+ * Probe the schoolview-api root status endpoint (GET /) to see if API credential auth is required.
+ * Returns true by default if unreachable or the field is absent.
+ */
+export async function checkSchoolviewAuthRequired(rawApiServerUrl?: string): Promise<boolean> {
+  const baseUrl = resolveSchoolviewBaseUrl(rawApiServerUrl);
+  if (!baseUrl) return true;
+  try {
+    const res = await fetchWithTimeout(`${baseUrl}/`, { method: 'GET' }, 5000);
+    if (!res.ok) return true;
+    const json = await safeParseJson(res);
+    return json?.auth_required !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Safely convert unknown API/FastAPI/Synergy error payloads into readable strings without throwing or returning "[object Object]".
  */
 export function formatApiErrorDetail(detail: unknown, fallbackStatus?: number): string {
@@ -685,11 +716,14 @@ export async function verifyStudentVueAccount(
     const apiUsername = (typeof req?.apiUsername === 'string' ? req.apiUsername : '').trim();
     const apiPassword = typeof req?.apiPassword === 'string' ? req.apiPassword : '';
     if (!apiUsername || !apiPassword) {
-      return {
-        ok: false,
-        stage: 'config',
-        error: 'API server username and password are required.',
-      };
+      const authRequired = await checkSchoolviewAuthRequired(baseUrl);
+      if (authRequired) {
+        return {
+          ok: false,
+          stage: 'config',
+          error: 'API server username and password are required.',
+        };
+      }
     }
 
     const districtDomain = normalizeSynergyDomain(req?.districtDomain);

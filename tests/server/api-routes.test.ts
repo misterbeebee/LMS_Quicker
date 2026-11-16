@@ -214,4 +214,44 @@ describe('Express API routes (/api/health, /api/proxy, /api/gemini/analyze)', ()
     expect(forwardedHeaders['x-edupoint-session']).toBe('fernet-tok');
     expect(forwardedHeaders['cookie']).toBeUndefined();
   });
+
+  it('returns clear 503 JSON when SCHOOLVIEW_API_URL is unset in production and forwards GET /api/studentvue/', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevSvUrl = process.env.SCHOOLVIEW_API_URL;
+    process.env.NODE_ENV = 'production';
+    delete process.env.SCHOOLVIEW_API_URL;
+
+    try {
+      const unconfiguredSrv = await startTestServer();
+      servers.push(unconfiguredSrv);
+
+      const res = await fetch(`${unconfiguredSrv.baseUrl}/api/studentvue/`);
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.detail).toContain('SCHOOLVIEW_API_URL');
+    } finally {
+      if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNodeEnv;
+      if (prevSvUrl === undefined) delete process.env.SCHOOLVIEW_API_URL;
+      else process.env.SCHOOLVIEW_API_URL = prevSvUrl;
+    }
+
+    const upstreamMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ status: 'ok', auth_required: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    const configuredSrv = await startTestServer({
+      proxyFetchImpl: upstreamMock,
+      studentVueApiUrl: 'https://studentvue-api-test.a.run.app/',
+    });
+    servers.push(configuredSrv);
+
+    const okRes = await fetch(`${configuredSrv.baseUrl}/api/studentvue/`);
+    expect(okRes.status).toBe(200);
+    expect(await okRes.json()).toEqual({ status: 'ok', auth_required: true });
+    expect(String((upstreamMock as any).mock.calls[0][0])).toBe('https://studentvue-api-test.a.run.app/');
+  });
 });

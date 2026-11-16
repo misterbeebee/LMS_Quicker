@@ -1,6 +1,7 @@
 import { CourseData } from '../types';
 import { logger } from './logger';
 import {
+  checkSchoolviewAuthRequired,
   formatApiErrorDetail,
   LinkedStudentVueProfile,
   normalizeSynergyDomain,
@@ -629,8 +630,13 @@ export async function syncStudentVueGradebook(
   if (!baseUrl) {
     return { ok: false, stage: 'config', error: 'StudentVUE API Server URL is required.' };
   }
-  if (!req.apiUsername.trim() || !req.apiPassword) {
-    return { ok: false, stage: 'config', error: 'API server username and password are required.' };
+  const apiUsername = (typeof req.apiUsername === 'string' ? req.apiUsername : '').trim();
+  const apiPassword = typeof req.apiPassword === 'string' ? req.apiPassword : '';
+  if (!apiUsername || !apiPassword) {
+    const authRequired = await checkSchoolviewAuthRequired(baseUrl);
+    if (authRequired) {
+      return { ok: false, stage: 'config', error: 'API server username and password are required.' };
+    }
   }
   if (!districtDomain) {
     return { ok: false, stage: 'config', error: 'Synergy district domain is required.' };
@@ -648,8 +654,8 @@ export async function syncStudentVueGradebook(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: req.apiUsername.trim(),
-          password: req.apiPassword,
+          username: apiUsername,
+          password: apiPassword,
         }),
       }, 25000);
     } catch (err: any) {

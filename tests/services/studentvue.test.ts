@@ -390,4 +390,73 @@ describe('StudentVUE comparison & verification service', () => {
     clearLinkedStudentVueProfile('stu_jane');
     expect(getLinkedStudentVueProfile('stu_jane')).toBeNull();
   });
+
+  it('allows blank API credentials when server reports auth_required: false and rejects when required', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'http://localhost:8080/') {
+        return new Response(JSON.stringify({ status: 'ok', auth_required: false }), { status: 200 });
+      }
+      if (url.includes('users/self') || decodeURIComponent(url).includes('users/self')) {
+        return new Response(
+          JSON.stringify({ id: 77, name: 'Maya Lin', primary_email: 'maya@school.edu', sis_user_id: '551122' }),
+          { status: 200 }
+        );
+      }
+      if (url === 'http://localhost:8080/auth/token') {
+        return new Response(JSON.stringify({ access_token: 'jwt_dev_bypass' }), { status: 200 });
+      }
+      if (url === 'http://localhost:8080/api/v1/edupoint/session') {
+        return new Response(JSON.stringify({ edupoint_session: 'enc_sess_1' }), { status: 200 });
+      }
+      if (url === 'http://localhost:8080/api/v1/edupoint/student-info') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              StudentInfo: {
+                FormattedName: { $: 'Lin, Maya' },
+                PermID: { $: '551122' },
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const bypassOk = await verifyStudentVueAccount({
+      apiServerUrl: 'http://localhost:8080',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'md-mcps-psv.edupoint.com',
+      edupointUsername: '551122',
+      edupointPassword: 'pw',
+      isParent: false,
+      canvasDomain: 'school.instructure.com',
+      canvasToken: '1234~abc',
+      useProxy: true,
+    });
+    expect(bypassOk.ok).toBe(true);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: 'ok', auth_required: true }), { status: 200 })
+    );
+    const blocked = await verifyStudentVueAccount({
+      apiServerUrl: 'http://localhost:8080',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'md-mcps-psv.edupoint.com',
+      edupointUsername: '551122',
+      edupointPassword: 'pw',
+      isParent: false,
+      canvasDomain: 'school.instructure.com',
+      canvasToken: '1234~abc',
+      useProxy: true,
+    });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok === false) {
+      expect(blocked.stage).toBe('config');
+    }
+  });
 });

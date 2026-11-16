@@ -176,71 +176,87 @@ export function registerApiRoutes(app: Express, options: ApiRouteOptions = {}): 
     })
   );
 
-  // StudentVUE API reverse proxy for local/remote-VM testing (forwards /api/studentvue/* -> schoolview-api)
-  const configuredStudentVueUrl =
-    options.studentVueApiUrl ??
-    process.env.SCHOOLVIEW_API_URL ??
-    (process.env.NODE_ENV !== 'production' ? 'http://127.0.0.1:8080' : '');
+  // StudentVUE API reverse proxy (forwards /api/studentvue/* -> Cloud Run / local schoolview-api)
+  const hopByHopHeaders = new Set([
+    'content-encoding',
+    'transfer-encoding',
+    'content-length',
+    'connection',
+    'keep-alive',
+    'alt-svc',
+    'upgrade',
+  ]);
 
-  if (configuredStudentVueUrl) {
-    const targetBase = configuredStudentVueUrl.trim().replace(/\/+$/, '');
-    app.use('/api/studentvue', async (req, res) => {
+  app.use('/api/studentvue', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Edupoint-Session');
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+
+    const rawTargetUrl =
+      options.studentVueApiUrl ??
+      process.env.SCHOOLVIEW_API_URL ??
+      (process.env.NODE_ENV !== 'production' ? 'http://127.0.0.1:8080' : '');
+    const targetBase = rawTargetUrl.trim().replace(/\/+$/, '');
+
+    if (!targetBase || (!targetBase.startsWith('http://') && !targetBase.startsWith('https://'))) {
+      res.status(503).json({
+        detail:
+          'SCHOOLVIEW_API_URL is not configured on this server. Set SCHOOLVIEW_API_URL to your deployed schoolview-api Cloud Run URL in Settings > Secrets.',
+      });
+      return;
+    }
+
+    try {
+      const subPath = req.url && req.url.startsWith('/') ? req.url : `/${req.url || ''}`;
+      const targetUrl = `${targetBase}${subPath}`;
+
+      let bodyBuffer: Buffer | undefined;
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+        }
+        if (chunks.length > 0) {
+          bodyBuffer = Buffer.concat(chunks);
+        }
+      }
+
+      const forwardHeaders: Record<string, string> = {};
+      for (const [key, value] of Object.entries(req.headers)) {
+        if (!value) continue;
+        const lower = key.toLowerCase();
+        if (STUDENTVUE_ALLOWED_HEADERS.has(lower)) {
+          forwardHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
+        }
+      }
+
+      const doFetch = options.proxyFetchImpl || fetch;
+      const upstreamRes = await doFetch(targetUrl, {
+        method: req.method || 'GET',
+        headers: forwardHeaders,
+        body: req.method !== 'GET' && req.method !== 'HEAD' ? bodyBuffer : undefined,
+      });
+
+      res.status(upstreamRes.status);
+      upstreamRes.headers.forEach((val, key) => {
+        const lower = key.toLowerCase();
+        if (!hopByHopHeaders.has(lower)) {
+          res.setHeader(key, val);
+        }
+      });
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Edupoint-Session');
 
-      if (req.method === 'OPTIONS') {
-        res.status(204).end();
-        return;
-      }
-
-      try {
-        const subPath = req.url && req.url.startsWith('/') ? req.url : `/${req.url || ''}`;
-        const targetUrl = `${targetBase}${subPath}`;
-
-        let bodyBuffer: Buffer | undefined;
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-          const chunks: Buffer[] = [];
-          for await (const chunk of req) {
-            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-          }
-          if (chunks.length > 0) {
-            bodyBuffer = Buffer.concat(chunks);
-          }
-        }
-
-        const forwardHeaders: Record<string, string> = {};
-        for (const [key, value] of Object.entries(req.headers)) {
-          if (!value) continue;
-          const lower = key.toLowerCase();
-          if (STUDENTVUE_ALLOWED_HEADERS.has(lower)) {
-            forwardHeaders[key] = Array.isArray(value) ? value.join(', ') : value;
-          }
-        }
-
-        const doFetch = options.proxyFetchImpl || fetch;
-        const upstreamRes = await doFetch(targetUrl, {
-          method: req.method || 'GET',
-          headers: forwardHeaders,
-          body: req.method !== 'GET' && req.method !== 'HEAD' ? bodyBuffer : undefined,
-        });
-
-        res.status(upstreamRes.status);
-        upstreamRes.headers.forEach((val, key) => {
-          const lower = key.toLowerCase();
-          if (lower !== 'content-encoding' && lower !== 'transfer-encoding' && lower !== 'content-length') {
-            res.setHeader(key, val);
-          }
-        });
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
-        const arrayBuffer = await upstreamRes.arrayBuffer();
-        res.end(Buffer.from(arrayBuffer));
-      } catch (err: any) {
-        res.status(502).json({
-          detail: 'StudentVUE API proxy failed: ' + (err?.message || String(err)),
-        });
-      }
-    });
-  }
+      const arrayBuffer = await upstreamRes.arrayBuffer();
+      res.end(Buffer.from(arrayBuffer));
+    } catch (err: any) {
+      res.status(502).json({
+        detail: 'StudentVUE API proxy failed: ' + (err?.message || String(err)),
+      });
+    }
+  });
 }

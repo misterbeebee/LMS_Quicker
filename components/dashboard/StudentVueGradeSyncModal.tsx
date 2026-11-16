@@ -22,6 +22,8 @@ import {
   getLinkedStudentVueProfile,
   inferSuggestedSynergyDomain,
   LinkedStudentVueProfile,
+  checkSchoolviewAuthRequired,
+  resolveDefaultSchoolviewApiUrl,
 } from '../../services/studentvue';
 import {
   clearSavedStudentVueGrades,
@@ -41,13 +43,7 @@ interface StudentVueGradeSyncModalProps {
   onOpenVerifyModal?: () => void;
 }
 
-function resolveDefaultApiUrl(): string {
-  const envUrl =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCHOOLVIEW_API_URL) || '';
-  return envUrl || 'http://localhost:8080';
-}
-
-const DEFAULT_API_URL = resolveDefaultApiUrl();
+const DEFAULT_API_URL = resolveDefaultSchoolviewApiUrl();
 
 export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> = ({
   isOpen,
@@ -75,10 +71,22 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
   const [apiUsername, setApiUsername] = useState('');
   const [apiPassword, setApiPassword] = useState('');
   const [showApiPassword, setShowApiPassword] = useState(false);
+  const [apiAuthRequired, setApiAuthRequired] = useState(true);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    checkSchoolviewAuthRequired(apiServerUrl).then((required) => {
+      if (!cancelled) setApiAuthRequired(required);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, apiServerUrl]);
 
   useEffect(() => {
     if (isOpen) {
@@ -411,7 +419,11 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
               <span className="flex items-center gap-2">
                 <Server className="w-3.5 h-3.5 text-slate-500" />
                 StudentVUE API Server Settings
-                {!apiUsername || !apiPassword ? (
+                {!apiAuthRequired ? (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
+                    Auth disabled (dev)
+                  </span>
+                ) : !apiUsername || !apiPassword ? (
                   <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.2 rounded">
                     Credentials needed
                   </span>
@@ -424,7 +436,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
               {showApiConfig ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
 
-            {(showApiConfig || !apiUsername || !apiPassword) && (
+            {(showApiConfig || (apiAuthRequired && (!apiUsername || !apiPassword))) && (
               <div className="p-3 bg-white space-y-2.5 border-t border-slate-100">
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -442,21 +454,21 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      API Username
+                      API Username {!apiAuthRequired ? '(optional)' : ''}
                     </label>
                     <input
                       type="text"
                       autoComplete="off"
                       value={apiUsername}
                       onChange={(e) => setApiUsername(e.target.value)}
-                      placeholder="API user"
-                      required
+                      placeholder={!apiAuthRequired ? 'Optional (auth disabled)' : 'API user'}
+                      required={apiAuthRequired}
                       className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 focus:outline-hidden focus:border-emerald-500"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      API Password
+                      API Password {!apiAuthRequired ? '(optional)' : ''}
                     </label>
                     <div className="relative">
                       <input
@@ -464,8 +476,8 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
                         autoComplete="off"
                         value={apiPassword}
                         onChange={(e) => setApiPassword(e.target.value)}
-                        placeholder="API secret"
-                        required
+                        placeholder={!apiAuthRequired ? 'Optional (auth disabled)' : 'API secret'}
+                        required={apiAuthRequired}
                         className="w-full pl-3 pr-8 py-1.5 text-xs rounded-lg border border-slate-300 focus:outline-hidden focus:border-emerald-500"
                       />
                       <button

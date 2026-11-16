@@ -29,6 +29,8 @@ import {
   getLinkedStudentVueProfile,
   saveLinkedStudentVueProfile,
   clearLinkedStudentVueProfile,
+  checkSchoolviewAuthRequired,
+  resolveDefaultSchoolviewApiUrl,
 } from '../../services/studentvue';
 import {
   fetchSynergyGradebookWithSession,
@@ -49,16 +51,7 @@ interface StudentVueVerifyModalProps {
   onGradesSynced?: (snapshot: StudentVueGradebookSnapshot) => void;
 }
 
-function resolveDefaultApiUrl(): string {
-  const envUrl =
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCHOOLVIEW_API_URL) || '';
-  if (envUrl) {
-    return envUrl;
-  }
-  return 'http://localhost:8080';
-}
-
-const DEFAULT_API_URL = resolveDefaultApiUrl();
+const DEFAULT_API_URL = resolveDefaultSchoolviewApiUrl();
 
 export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   isOpen,
@@ -85,6 +78,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   const [apiUsername, setApiUsername] = useState('');
   const [apiPassword, setApiPassword] = useState('');
   const [showApiPassword, setShowApiPassword] = useState(false);
+  const [apiAuthRequired, setApiAuthRequired] = useState(true);
 
   const [isVerifying, setIsVerifying] = useState(false);
   const [outcome, setOutcome] = useState<StudentVueVerifyOutcome | null>(null);
@@ -107,6 +101,18 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
+
+  // Probe whether schoolview-api currently requires API credentials when modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    checkSchoolviewAuthRequired(apiServerUrl).then((required) => {
+      if (!cancelled) setApiAuthRequired(required);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, apiServerUrl]);
 
   // Load saved link & suggest matching Synergy endpoint on open; clear transient secrets on close
   useEffect(() => {
@@ -467,7 +473,12 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             >
               <span className="flex items-center gap-2">
                 <Server className="w-3.5 h-3.5 text-slate-500" />
-                StudentVUE API Server ({apiServerUrl})
+                <span>StudentVUE API Server ({apiServerUrl})</span>
+                {!apiAuthRequired && (
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                    Auth disabled (dev)
+                  </span>
+                )}
               </span>
               {showApiConfig ? (
                 <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
@@ -476,7 +487,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
               )}
             </button>
 
-            {(showApiConfig || !apiUsername || !apiPassword) && (
+            {(showApiConfig || (apiAuthRequired && (!apiUsername || !apiPassword))) && (
               <div className="p-3.5 space-y-3 border-t border-slate-200 bg-white">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-600 mb-1">
@@ -494,31 +505,31 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                      API Username
+                      API Username {!apiAuthRequired ? '(optional)' : ''}
                     </label>
                     <input
                       type="text"
                       autoComplete="off"
-                      placeholder="e.g. alice"
+                      placeholder={!apiAuthRequired ? 'Optional (auth disabled)' : 'e.g. alice'}
                       value={apiUsername}
                       onChange={(e) => setApiUsername(e.target.value)}
                       className="w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:border-indigo-500"
-                      required
+                      required={apiAuthRequired}
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                      API Password
+                      API Password {!apiAuthRequired ? '(optional)' : ''}
                     </label>
                     <div className="relative">
                       <input
                         type={showApiPassword ? 'text' : 'password'}
                         autoComplete="new-password"
-                        placeholder="API user password"
+                        placeholder={!apiAuthRequired ? 'Optional (auth disabled)' : 'API user password'}
                         value={apiPassword}
                         onChange={(e) => setApiPassword(e.target.value)}
                         className="w-full text-xs pl-3 pr-8 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:border-indigo-500"
-                        required
+                        required={apiAuthRequired}
                       />
                       <button
                         type="button"
