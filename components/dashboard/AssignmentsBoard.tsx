@@ -6,7 +6,7 @@ import {
   Calendar, AlertCircle, ArrowRight, AlertTriangle, CheckCircle2, 
   Lock, FileCheck, Archive, ArchiveRestore, HelpCircle, MessageSquare, 
   BookOpen, MapPin, Maximize2, Check, FileText, Settings, Languages, Globe,
-  ChevronDown, ChevronRight, Megaphone, Loader2, ExternalLink
+  ChevronDown, ChevronRight, Megaphone, Loader2, ExternalLink, Columns2
 } from 'lucide-react';
 import { getAssignmentStatus, stripHtml, isAssignmentSubmitted, getScoreStyle, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate, formatCalendarEventDate, isPastCalendarEvent } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
@@ -15,6 +15,8 @@ import { TranslationModal } from './TranslationModal';
 import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslationInProgress } from '../../services/translation';
 import { CourseCustomization } from '../../services/courseCustomization';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
+import { StudentVueCourseMatch, StudentVueGradebookSnapshot } from '../../services/studentvueGrades';
+import { RecentGradesTimeline } from './RecentGradesTimeline';
 import { useNow } from '../../utils/useRelativeTime';
 import { extractAssignmentFromTodo, getCalendarEventWebUrl } from '../../utils/canvasUrls';
 import { AnnouncementsWidget } from './AnnouncementsWidget';
@@ -49,6 +51,14 @@ interface AssignmentsBoardProps {
   announcements?: CanvasAnnouncement[];
   onDismissAnnouncement?: (announcement: CanvasAnnouncement) => Promise<void>;
   courses?: CourseData[];
+  selectedCourseId?: number | null;
+  visibleCourseIds?: Set<number>;
+  synergySnapshot?: StudentVueGradebookSnapshot | null;
+  synergyCourseMap?: Map<number, StudentVueCourseMatch>;
+  onOpenSynergySync?: () => void;
+  onInspectCourseGrade?: (courseId: number, initialTab?: 'breakdown' | 'synergy' | 'raw') => void;
+  gradeReviewMode?: 'current' | 'timeline';
+  onGradeReviewModeChange?: (mode: 'current' | 'timeline') => void;
 }
 
 export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({ 
@@ -80,10 +90,21 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
   onMarkTodoDone,
   announcements = [],
   onDismissAnnouncement,
-  courses = []
+  courses = [],
+  selectedCourseId = null,
+  visibleCourseIds,
+  synergySnapshot = null,
+  synergyCourseMap,
+  onOpenSynergySync,
+  onInspectCourseGrade,
+  gradeReviewMode,
+  onGradeReviewModeChange,
 }) => {
   const now = useNow();
   const [workflowSection, setWorkflowSection] = useState<'upcoming' | 'completed'>('upcoming');
+  const [localGradeReviewMode, setLocalGradeReviewMode] = useState<'current' | 'timeline'>('current');
+  const activeGradeReviewMode = gradeReviewMode ?? localGradeReviewMode;
+  const setGradeReviewMode = onGradeReviewModeChange ?? setLocalGradeReviewMode;
   const [isTodoExpanded, setIsTodoExpanded] = useState(true);
   const [processingTodoKey, setProcessingTodoKey] = useState<string | null>(null);
   const [zoomedAssignment, setZoomedAssignment] = useState<CanvasAssignment | null>(null);
@@ -690,7 +711,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
     return grouped.completed.length;
   }, [grouped]);
 
-  if (isEmpty && !activeFilterFeedback && (!todoItems || todoItems.length === 0) && (!announcements || announcements.length === 0)) {
+  if (isEmpty && assignments.length === 0 && !synergySnapshot && !activeFilterFeedback && (!todoItems || todoItems.length === 0) && (!announcements || announcements.length === 0)) {
     return (
       <div className="flex flex-col items-center justify-center h-96 bg-white rounded-xl border border-slate-200 border-dashed">
          <div className="bg-green-50 p-4 rounded-full mb-4">
@@ -747,6 +768,41 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
 
         {/* Secondary Filter Controls */}
         <div className="flex items-center flex-wrap gap-2">
+          {workflowSection === 'completed' && (
+            <div
+              className="inline-flex items-center gap-1 p-0.5 bg-slate-100 rounded-xl border border-slate-200/80 shadow-2xs"
+              role="group"
+              aria-label="Assignment grade review view mode"
+            >
+              <button
+                type="button"
+                data-testid="toggle-grade-review-current"
+                onClick={() => setGradeReviewMode('current')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                  activeGradeReviewMode === 'current'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="View standard Canvas Completed & Graded cards"
+              >
+                Current View
+              </button>
+              <button
+                type="button"
+                data-testid="toggle-grade-review-timeline"
+                onClick={() => setGradeReviewMode('timeline')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer inline-flex items-center gap-1.5 ${
+                  activeGradeReviewMode === 'timeline'
+                    ? 'bg-white text-emerald-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Compare Canvas work and official Synergy grades side-by-side in a date-aligned timeline"
+              >
+                <Columns2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Side-by-Side (Synergy)</span>
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -853,6 +909,26 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
       )}
 
       {workflowSection === 'completed' ? (
+        activeGradeReviewMode === 'timeline' ? (
+          <RecentGradesTimeline
+            assignments={assignments}
+            courses={courses}
+            selectedCourseId={selectedCourseId}
+            visibleCourseIds={visibleCourseIds}
+            getCourseName={getCourseName}
+            courseCustomizations={courseCustomizations}
+            archivedAssignmentIds={archivedAssignmentIds}
+            showArchived={showArchived}
+            showScores={showScores}
+            gradeConfig={gradeConfig}
+            synergySnapshot={synergySnapshot}
+            synergyCourseMap={synergyCourseMap}
+            onZoomAssignment={(a) => setZoomedAssignment(a)}
+            onOpenSynergySync={onOpenSynergySync}
+            onInspectCourseGrade={onInspectCourseGrade}
+            canvasUrl={canvasUrl}
+          />
+        ) : (
         /* DEDICATED COMPLETED & GRADED WORKSPACE */
         <div className="space-y-4 animate-fadeIn">
           <div className="flex items-center justify-between bg-slate-50/80 px-4 py-3 rounded-xl border border-slate-200/90 gap-3 flex-wrap">
@@ -886,6 +962,7 @@ export const AssignmentsBoard: React.FC<AssignmentsBoardProps> = ({
             </div>
           )}
         </div>
+        )
       ) : (
         /* UPCOMING & ACTIVE WORKSPACE */
         <div className="space-y-5 animate-fadeIn">

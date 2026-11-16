@@ -175,4 +175,43 @@ describe('Express API routes (/api/health, /api/proxy, /api/gemini/analyze)', ()
       contents: 'Summarize assignments',
     });
   });
+
+  it('forwards /api/studentvue/* requests and headers to configured schoolview-api server', async () => {
+    const upstreamMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      return new Response(JSON.stringify({ access_token: 'jwt-123', token_type: 'bearer' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+    const srv = await startTestServer({
+      proxyFetchImpl: upstreamMock,
+      studentVueApiUrl: 'http://127.0.0.1:8080',
+    });
+    servers.push(srv);
+
+    const res = await fetch(`${srv.baseUrl}/api/studentvue/api/v1/edupoint/student-info`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer jwt-abc',
+        'Content-Type': 'application/json',
+        'X-Edupoint-Session': 'fernet-tok',
+        Cookie: 'session=ignored',
+      },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ access_token: 'jwt-123', token_type: 'bearer' });
+    expect(upstreamMock).toHaveBeenCalledTimes(1);
+
+    const [calledUrl, calledInit] = (upstreamMock as any).mock.calls[0];
+    expect(String(calledUrl)).toBe('http://127.0.0.1:8080/api/v1/edupoint/student-info');
+    const forwardedHeaders = Object.fromEntries(
+      Object.entries(calledInit.headers as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v])
+    );
+    expect(forwardedHeaders['authorization']).toBe('Bearer jwt-abc');
+    expect(forwardedHeaders['x-edupoint-session']).toBe('fernet-tok');
+    expect(forwardedHeaders['cookie']).toBeUndefined();
+  });
 });

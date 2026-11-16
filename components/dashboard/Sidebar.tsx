@@ -7,6 +7,7 @@ import { CourseCustomization } from '../../services/courseCustomization';
 import { getGradeStyle } from '../../services/gradeScale';
 import { isCourseInPastTerm } from '../../utils/dashboard-helpers';
 import { getEffectiveCourseGrade } from '../../utils/gradeInspector';
+import { StudentVueCourseMatch } from '../../services/studentvueGrades';
 
 interface SidebarProps {
   data: CourseData[];
@@ -29,7 +30,9 @@ interface SidebarProps {
   onSaveCustomization?: (courseId: number, custom: CourseCustomization) => void;
   courseOrder?: number[];
   onUpdateCourseOrder?: (order: number[]) => void;
-  onInspectCourseGrade?: (courseId: number) => void;
+  onInspectCourseGrade?: (courseId: number, initialTab?: 'breakdown' | 'synergy' | 'raw') => void;
+  synergyCourseMap?: Map<number, StudentVueCourseMatch>;
+  synergyPeriodName?: string;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
 }
@@ -56,6 +59,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   courseOrder = [],
   onUpdateCourseOrder,
   onInspectCourseGrade,
+  synergyCourseMap,
+  synergyPeriodName,
   isMobileOpen = false,
   onCloseMobile
 }) => {
@@ -517,7 +522,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   {showScores && (() => {
-                    const effective = getEffectiveCourseGrade(item);
+                    const matchedSynergy = synergyCourseMap?.get(item.course.id)?.course ?? null;
+                    const effective = getEffectiveCourseGrade(item, {
+                      synergyCourse: matchedSynergy,
+                      reportingPeriodName: synergyPeriodName,
+                    });
                     if (!effective || !effective.hasData) {
                       return null;
                     }
@@ -532,21 +541,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           data-testid={`sidebar-inspect-grade-${item.course.id}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onInspectCourseGrade(item.course.id);
+                            onInspectCourseGrade(item.course.id, effective.isOfficial ? 'synergy' : 'breakdown');
                           }}
                           className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded-full border shadow-2xs hover:opacity-85 transition cursor-pointer"
                           style={style.style}
-                          title={`Inspect how ${prunedTitle}'s grade is fetched or calculated`}
+                          title={
+                            effective.isOfficial
+                              ? `Official StudentVUE grade${effective.officialPeriodName ? ` (${effective.officialPeriodName})` : ''} — click to view category & item details`
+                              : `Inspect how ${prunedTitle}'s grade is fetched or calculated`
+                          }
                         >
                           <span>{gradeLabel}</span>
                           {effective.letter && (
                             <span className="text-[10px] opacity-80">({effective.score}%)</span>
                           )}
-                          {effective.isEstimated && (
+                          {effective.isOfficial ? (
+                            <span className="text-[9px] font-bold px-1 rounded bg-emerald-100/90 text-emerald-800 border border-emerald-300/70">
+                              Official
+                            </span>
+                          ) : effective.isEstimated ? (
                             <span className="text-[9px] font-bold px-1 rounded bg-amber-100/90 text-amber-800 border border-amber-300/70">
                               Est
                             </span>
-                          )}
+                          ) : null}
                         </button>
                       );
                     }
@@ -560,11 +577,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         {effective.letter && (
                           <span className="text-[10px] opacity-80">({effective.score}%)</span>
                         )}
-                        {effective.isEstimated && (
+                        {effective.isOfficial ? (
+                          <span className="text-[9px] font-bold px-1 rounded bg-emerald-100/90 text-emerald-800 border border-emerald-300/70">
+                            Official
+                          </span>
+                        ) : effective.isEstimated ? (
                           <span className="text-[9px] font-bold px-1 rounded bg-amber-100/90 text-amber-800 border border-amber-300/70">
                             Est
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     );
                   })()}

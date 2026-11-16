@@ -6,6 +6,8 @@ import { CourseData, ExportFormat, StudentProfile, CanvasCalendarEvent } from '.
 import { downloadData } from '../../services/exporter';
 import { StudentSwitcher } from './StudentSwitcher';
 
+import { StudentVueGradebookSnapshot } from '../../services/studentvueGrades';
+
 interface HeaderProps {
   selectedCourseName: string;
   activeTab: 'overview' | 'assignments' | 'calendar' | 'modules';
@@ -63,6 +65,10 @@ interface HeaderProps {
   onOpenMobileMenu?: () => void;
   onOpenMobileSettings?: () => void;
   onLogout?: () => void;
+  hasSyncedGrades?: boolean;
+  syncedPeriodName?: string;
+  onOpenSyncGrades?: () => void;
+  onSynergyGradesSynced?: (snapshot: StudentVueGradebookSnapshot) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -110,7 +116,11 @@ export const Header: React.FC<HeaderProps> = ({
   onRenameStudent,
   onOpenMobileMenu,
   onOpenMobileSettings,
-  onLogout
+  onLogout,
+  hasSyncedGrades = false,
+  syncedPeriodName,
+  onOpenSyncGrades,
+  onSynergyGradesSynced,
 }) => {
   const [isDisplayMenuOpen, setIsDisplayMenuOpen] = useState(false);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
@@ -175,6 +185,10 @@ export const Header: React.FC<HeaderProps> = ({
               useProxy={useProxy}
               onSwitchStudent={onSwitchStudent}
               onRenameStudent={onRenameStudent}
+              hasSyncedGrades={hasSyncedGrades}
+              syncedPeriodName={syncedPeriodName}
+              onOpenSyncGrades={onOpenSyncGrades}
+              onSynergyGradesSynced={onSynergyGradesSynced}
             />
           </div>
         )}

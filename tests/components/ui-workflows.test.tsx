@@ -270,6 +270,128 @@ describe('StudentSwitcher workflows', () => {
     expect(screen.getByRole('heading', { name: 'All Courses' })).toBeInTheDocument();
     fetchSpy.mockRestore();
   });
+
+  it('auto-matches matching ParentVUE student and lets user switch children in StudentVueVerifyModal without re-entering credentials', async () => {
+    const user = userEvent.setup();
+    saveStudent({ name: 'Sam Doe', domain: 'mcpsmd.instructure.com', apiKey: '1000~sam' });
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('users/self') || decodeURIComponent(url).includes('users/self')) {
+        return new Response(
+          JSON.stringify({ id: 88, name: 'Sam Doe', sis_user_id: '222002', primary_email: 'sam.doe@school.edu' }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/auth/token')) {
+        return new Response(JSON.stringify({ access_token: 'jwt_parent' }), { status: 200 });
+      }
+      if (url.endsWith('/api/v1/edupoint/session')) {
+        return new Response(JSON.stringify({ edupoint_session: 'sess_parent' }), { status: 200 });
+      }
+      if (url.endsWith('/api/v1/edupoint/student-info')) {
+        return new Response(
+          JSON.stringify({
+            data: {
+              StudentInfo: {
+                FormattedName: { $: 'Doe, Alex' },
+                PermID: { $: '111001' },
+                Students: [
+                  {
+                    FormattedName: { $: 'Doe, Alex' },
+                    PermID: { $: '111001' },
+                    CurrentSchool: { $: 'North MS' },
+                    Grade: { $: '07' },
+                  },
+                  {
+                    FormattedName: { $: 'Doe, Sam' },
+                    PermID: { $: '222002' },
+                    EMail: { $: 'sam.doe@school.edu' },
+                    CurrentSchool: { $: 'MCPS High' },
+                    Grade: { $: '11' },
+                    AGU: { $: 'AGU-SAM-2' },
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    render(
+      <Dashboard
+        data={sampleCourses}
+        apiKey="1000~sam"
+        canvasUrl="mcpsmd.instructure.com"
+        useProxy={true}
+        onLogout={vi.fn()}
+        onDebug={vi.fn()}
+        currentStudentId="sam_1"
+        currentStudentName="Sam Doe"
+        onSwitchStudent={vi.fn()}
+        onRenameStudent={vi.fn()}
+      />
+    );
+
+    await user.click(await screen.findByTitle(/Current Student: Sam Doe/i));
+    await user.click(screen.getByTestId('student-switcher-verify-studentvue'));
+    const modal = await screen.findByTestId('studentvue-verify-modal');
+
+    await user.click(within(modal).getByRole('button', { name: 'ParentVUE' }));
+    const userInput = within(modal).getByPlaceholderText('Student ID / Username') as HTMLInputElement;
+    await user.type(userInput, 'parent_user');
+
+    // Clicking backdrop outside the modal dialog must NOT close it or discard transient input
+    await user.click(modal);
+    expect(screen.getByTestId('studentvue-verify-modal')).toBeInTheDocument();
+    expect(userInput.value).toBe('parent_user');
+
+    await user.type(within(modal).getByPlaceholderText('Password (transient)'), 'pw');
+    await user.type(within(modal).getByPlaceholderText('e.g. alice'), 'velm_dev');
+    await user.type(within(modal).getByPlaceholderText('API user password'), 'velm-local-dev');
+    await user.click(within(modal).getByRole('button', { name: /Verify Account Match/i }));
+
+    expect(await within(modal).findByText(/Accounts Match \(high confidence\)/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Auto-matched from 2 ParentVUE students/i)).toBeInTheDocument();
+
+    const select = within(modal).getByTestId('parentvue-student-select') as HTMLSelectElement;
+    expect(select.value).toBe('1');
+
+    // Switch manually to child 0 (Doe, Alex) -> shows mismatch details without extra fetch calls
+    await user.selectOptions(select, '0');
+    expect(within(modal).getByText(/Account Mismatch Detected/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Name differs:/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Showing student 1 of 2/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Name: Doe, Alex/i)).toBeInTheDocument();
+
+    // Switch back to matching child 1 and Confirm & Save Match
+    await user.selectOptions(select, '1');
+    expect(within(modal).getByText(/Accounts Match \(high confidence\)/i)).toBeInTheDocument();
+    await user.click(within(modal).getByTestId('confirm-save-studentvue-match'));
+    expect(within(modal).getByText('Match Saved')).toBeInTheDocument();
+
+    // Ensure non-credential link is persisted and Edupoint credentials are never stored
+    const storedRaw = localStorage.getItem('velm_studentvue_link_v1_sam_1') || '';
+    expect(storedRaw).toContain('222002');
+    expect(storedRaw).toContain('AGU-SAM-2');
+    expect(storedRaw).not.toContain('parent_user');
+    expect(storedRaw).not.toContain('velm-local-dev');
+
+    // Close modal -> StudentSwitcher badge reflects Linked state -> reopen shows saved banner
+    await user.click(within(modal).getByRole('button', { name: /Close StudentVUE Verification/i }));
+    await user.click(await screen.findByTitle(/Current Student: Sam Doe/i));
+    const svBtn = screen.getByTestId('student-switcher-verify-studentvue');
+    expect(within(svBtn).getByText('Linked')).toBeInTheDocument();
+
+    await user.click(svBtn);
+    const reopened = await screen.findByTestId('studentvue-verify-modal');
+    expect(within(reopened).getByTestId('saved-studentvue-link-banner')).toHaveTextContent(/Doe, Sam \(PermID 222002\)/i);
+
+    fetchSpy.mockRestore();
+  });
 });
 
 describe('GradeThresholdModal single-line three-thumb slider', () => {

@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   compareStudentProfiles,
+  extractStudentVueProfiles,
+  selectBestMatchingStudent,
   verifyStudentVueAccount,
   SYNERGY_ENDPOINT_OPTIONS,
   normalizeSynergyDomain,
   inferSuggestedSynergyDomain,
   formatApiErrorDetail,
+  saveLinkedStudentVueProfile,
+  getLinkedStudentVueProfile,
+  clearLinkedStudentVueProfile,
 } from '../../services/studentvue';
 
 describe('StudentVUE comparison & verification service', () => {
@@ -91,10 +96,11 @@ describe('StudentVUE comparison & verification service', () => {
     }
   });
 
-  it('never throws or renders [object Object] on FastAPI 422 arrays, HTML errors, or Synergy RT_ERROR payloads', async () => {
+  it('never throws or renders [object Object] on FastAPI 422 arrays, HTML errors, empty error bodies, or Synergy RT_ERROR payloads', async () => {
     expect(
       formatApiErrorDetail([{ loc: ['body', 'district_domain'], msg: 'field required' }], 422)
     ).toBe('district_domain: field required');
+    expect(formatApiErrorDetail({}, 401)).toBe('HTTP 401 (empty response)');
 
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -203,5 +209,185 @@ describe('StudentVUE comparison & verification service', () => {
       expect(outcome.comparison.confidence).toBe('high');
       expect(outcome.comparison.studentVueProfile.school).toBe('Oak Ridge High');
     }
+  });
+
+  it('extracts multi-student ParentVUE payloads and auto-matches the matching sibling from Canvas context', async () => {
+    const profiles = extractStudentVueProfiles({
+      StudentInfo: {
+        FormattedName: { $: 'Doe, Alex' },
+        PermID: { $: '111001' },
+        CurrentSchool: { $: 'North MS' },
+        Grade: { $: '07' },
+        Students: [
+          {
+            FormattedName: { $: 'Doe, Alex' },
+            PermID: { $: '111001' },
+            CurrentSchool: { $: 'North MS' },
+            Grade: { $: '07' },
+          },
+          {
+            FormattedName: { $: 'Doe, Sam' },
+            PermID: { $: '222002' },
+            EMail: { $: 'sam.doe@school.edu' },
+            CurrentSchool: { $: 'MCPS High' },
+            Grade: { $: '11' },
+          },
+        ],
+      },
+    });
+
+    expect(profiles).toHaveLength(2);
+    expect(profiles[0].name).toBe('Doe, Alex');
+    expect(profiles[1].name).toBe('Doe, Sam');
+
+    const best = selectBestMatchingStudent(
+      { name: 'Sam Doe', sisUserId: '222002', email: 'sam.doe@school.edu' },
+      profiles
+    );
+    expect(best.selectedIndex).toBe(1);
+    expect(best.comparison.matched).toBe(true);
+    expect(best.comparison.confidence).toBe('high');
+    expect(best.comparison.studentVueProfile.name).toBe('Doe, Sam');
+
+    const noneMatched = selectBestMatchingStudent(
+      { name: 'Someone Else', email: 'other@school.edu' },
+      profiles
+    );
+    expect(noneMatched.selectedIndex).toBe(0);
+    expect(noneMatched.comparison.matched).toBe(false);
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('users/self') || decodeURIComponent(url).includes('users/self')) {
+        return new Response(
+          JSON.stringify({ id: 88, name: 'Sam Doe', sis_user_id: '222002', primary_email: 'sam.doe@school.edu' }),
+          { status: 200 }
+        );
+      }
+      if (url === 'http://localhost:8080/auth/token') {
+        return new Response(JSON.stringify({ access_token: 'jwt_parent' }), { status: 200 });
+      }
+      if (url === 'http://localhost:8080/api/v1/edupoint/session') {
+        return new Response(JSON.stringify({ edupoint_session: 'sess_parent' }), { status: 200 });
+      }
+      if (url === 'http://localhost:8080/api/v1/edupoint/student-info') {
+        return new Response(
+          JSON.stringify({
+            data: {
+              StudentInfo: {
+                FormattedName: { $: 'Doe, Alex' },
+                PermID: { $: '111001' },
+                Students: [
+                  {
+                    FormattedName: { $: 'Doe, Alex' },
+                    PermID: { $: '111001' },
+                    CurrentSchool: { $: 'North MS' },
+                    Grade: { $: '07' },
+                  },
+                  {
+                    FormattedName: { $: 'Doe, Sam' },
+                    PermID: { $: '222002' },
+                    EMail: { $: 'sam.doe@school.edu' },
+                    CurrentSchool: { $: 'MCPS High' },
+                    Grade: { $: '11' },
+                  },
+                ],
+              },
+            },
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const outcome = await verifyStudentVueAccount({
+      apiServerUrl: 'http://localhost:8080',
+      apiUsername: 'velm_dev',
+      apiPassword: 'pw',
+      districtDomain: 'md-mcps-psv.edupoint.com',
+      edupointUsername: 'parent1',
+      edupointPassword: 'pw',
+      isParent: true,
+      canvasDomain: 'mcpsmd.instructure.com',
+      canvasToken: 'tok',
+      useProxy: true,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.comparison.matched).toBe(true);
+      expect(outcome.comparison.selectedStudentIndex).toBe(1);
+      expect(outcome.comparison.availableStudents).toHaveLength(2);
+      expect(outcome.comparison.studentVueProfile.name).toBe('Doe, Sam');
+    }
+  });
+
+  it('treats matching Student ID / PermID as authoritative even when email or middle name differs, and persists non-credential link metadata', () => {
+    const idAndMiddleMatch = compareStudentProfiles(
+      {
+        name: 'Jane Marie Doe',
+        sisUserId: '551122',
+        email: '551122@mcpsmd.net',
+      },
+      {
+        name: 'Doe, Jane M',
+        permId: '551122',
+        email: 'parent@gmail.com',
+      }
+    );
+
+    expect(idAndMiddleMatch.matched).toBe(true);
+    expect(idAndMiddleMatch.confidence).toBe('high');
+    expect(idAndMiddleMatch.mismatchReasons).toHaveLength(0);
+    expect(idAndMiddleMatch.matchReasons).toContain('Student ID matches (551122)');
+    expect(idAndMiddleMatch.matchReasons.some((r) => r.includes('Name matches'))).toBe(true);
+    expect(idAndMiddleMatch.warnings.some((w) => w.includes('Email differs'))).toBe(true);
+
+    const idOnlyMatch = compareStudentProfiles(
+      {
+        name: 'Alex',
+        loginId: '998877@mcpsmd.net',
+      },
+      {
+        name: 'Doe, Alexander',
+        permId: '998877',
+      }
+    );
+    expect(idOnlyMatch.matched).toBe(true);
+    expect(idOnlyMatch.confidence).toBe('medium');
+    expect(idOnlyMatch.mismatchReasons).toHaveLength(0);
+
+    const withAgu = extractStudentVueProfiles({
+      StudentInfo: {
+        Students: [
+          {
+            FormattedName: { $: 'Doe, Jane M' },
+            PermID: { $: '551122' },
+            AGU: { $: 'AGU-999' },
+          },
+        ],
+      },
+    });
+    expect(withAgu[0].agu).toBe('AGU-999');
+
+    localStorage.clear();
+    const saved = saveLinkedStudentVueProfile('stu_jane', {
+      confirmedAt: '2026-11-14T22:00:00Z',
+      districtDomain: 'https://md-mcps-psv.edupoint.com/',
+      isParent: true,
+      apiServerUrl: '/api/studentvue/',
+      studentName: withAgu[0].name,
+      permId: withAgu[0].permId,
+      agu: withAgu[0].agu,
+      confidence: 'high',
+      matched: true,
+    });
+    expect(saved.districtDomain).toBe('md-mcps-psv.edupoint.com');
+    expect(saved.apiServerUrl).toBe('/api/studentvue');
+    expect(getLinkedStudentVueProfile('stu_jane')?.agu).toBe('AGU-999');
+
+    clearLinkedStudentVueProfile('stu_jane');
+    expect(getLinkedStudentVueProfile('stu_jane')).toBeNull();
   });
 });

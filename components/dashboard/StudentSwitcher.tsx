@@ -12,7 +12,8 @@ import {
   Key,
   ShieldCheck,
   AlertCircle,
-  Edit2
+  Edit2,
+  RefreshCw
 } from 'lucide-react';
 import { 
   getSavedStudents, 
@@ -25,6 +26,8 @@ import { sanitizeCanvasDomain, sanitizeCanvasToken } from '../../utils/canvasUrl
 
 import { ErrorBoundary } from '../ErrorBoundary';
 import { StudentVueVerifyModal } from './StudentVueVerifyModal';
+import { getLinkedStudentVueProfile, LinkedStudentVueProfile } from '../../services/studentvue';
+import { StudentVueGradebookSnapshot } from '../../services/studentvueGrades';
 
 interface StudentSwitcherProps {
   currentStudentId?: string;
@@ -35,6 +38,10 @@ interface StudentSwitcherProps {
   onSwitchStudent: (student: StudentProfile) => void;
   onRenameStudent?: (newName: string) => void;
   compact?: boolean;
+  hasSyncedGrades?: boolean;
+  syncedPeriodName?: string;
+  onOpenSyncGrades?: () => void;
+  onSynergyGradesSynced?: (snapshot: StudentVueGradebookSnapshot) => void;
 }
 
 const COLOR_CLASSES: Record<string, { bg: string; text: string; ring: string }> = {
@@ -55,6 +62,10 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
   onSwitchStudent,
   onRenameStudent,
   compact = false,
+  hasSyncedGrades = false,
+  syncedPeriodName,
+  onOpenSyncGrades,
+  onSynergyGradesSynced,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -97,6 +108,13 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
     : COLOR_CLASSES.blue;
 
   const activeSelectedId = currentStudentId || activeStudent?.id;
+  const [linkedStudentVue, setLinkedStudentVue] = useState<LinkedStudentVueProfile | null>(() =>
+    getLinkedStudentVueProfile(activeSelectedId)
+  );
+
+  useEffect(() => {
+    setLinkedStudentVue(getLinkedStudentVueProfile(activeSelectedId));
+  }, [activeSelectedId]);
 
   const handleSelectStudent = (student: StudentProfile) => {
     setIsOpen(false);
@@ -403,16 +421,55 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
                 setIsStudentVueModalOpen(true);
               }}
               className="w-full flex items-center justify-between gap-2 py-2 px-3 text-xs font-bold text-indigo-700 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100/80 rounded-xl transition cursor-pointer"
-              title="Verify that Synergy StudentVUE matches this Canvas student profile"
+              title={
+                linkedStudentVue
+                  ? `Linked to StudentVUE: ${linkedStudentVue.studentName || 'Student'}${
+                      linkedStudentVue.permId ? ` (PermID ${linkedStudentVue.permId})` : ''
+                    }`
+                  : 'Verify that Synergy StudentVUE matches this Canvas student profile'
+              }
             >
               <span className="flex items-center gap-2 min-w-0">
                 <ShieldCheck className="w-4 h-4 shrink-0" />
                 <span className="truncate">Verify StudentVUE</span>
               </span>
-              <span className="text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded shrink-0">
-                Exp
-              </span>
+              {linkedStudentVue ? (
+                <span className="text-[9px] font-bold uppercase tracking-wide bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded shrink-0">
+                  Linked
+                </span>
+              ) : (
+                <span className="text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded shrink-0">
+                  Exp
+                </span>
+              )}
             </button>
+
+            {onOpenSyncGrades && (
+              <button
+                type="button"
+                data-testid="student-switcher-sync-grades"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenSyncGrades();
+                }}
+                className="w-full flex items-center justify-between gap-2 py-2 px-3 text-xs font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/80 rounded-xl transition cursor-pointer"
+                title="Fetch official weighted course grades and category breakdowns from StudentVUE"
+              >
+                <span className="flex items-center gap-2 min-w-0">
+                  <RefreshCw className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Sync Official Grades</span>
+                </span>
+                {hasSyncedGrades ? (
+                  <span className="text-[9px] font-bold uppercase tracking-wide bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded shrink-0">
+                    {syncedPeriodName || 'Synced'}
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-bold uppercase tracking-wide bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded shrink-0">
+                    Synergy
+                  </span>
+                )}
+              </button>
+            )}
 
             <button
               type="button"
@@ -565,10 +622,13 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
           <StudentVueVerifyModal
             isOpen={isStudentVueModalOpen}
             onClose={() => setIsStudentVueModalOpen(false)}
+            studentId={activeSelectedId}
             studentName={displayName}
             canvasDomain={currentDomain || activeStudent?.domain}
             canvasToken={canvasToken || activeStudent?.apiKey}
             useProxy={useProxy ?? activeStudent?.useProxy ?? true}
+            onLinkSaved={setLinkedStudentVue}
+            onGradesSynced={onSynergyGradesSynced}
           />
         </ErrorBoundary>
       )}

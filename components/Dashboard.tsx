@@ -20,11 +20,19 @@ import { NotesPanel } from './dashboard/NotesPanel';
 import { SaveLoadModal } from './dashboard/SaveLoadModal';
 import { SaveDialog } from './dashboard/SaveDialog';
 import { GradeThresholdModal } from './dashboard/GradeThresholdModal';
-import { CourseGradeInspectorModal } from './dashboard/CourseGradeInspectorModal';
+import { CourseGradeInspectorModal, CourseInspectorTab } from './dashboard/CourseGradeInspectorModal';
+import { StudentVueGradeSyncModal } from './dashboard/StudentVueGradeSyncModal';
+import { StudentVueVerifyModal } from './dashboard/StudentVueVerifyModal';
 import { MobileControlsDrawer } from './dashboard/MobileControlsDrawer';
 import { InteractiveTutorialModal, TutorialId } from './dashboard/InteractiveTutorialModal';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getSavedGradeConfig, saveGradeConfig, getGradeStyle } from '../services/gradeScale';
 import { getEffectiveCourseGrade } from '../utils/gradeInspector';
+import {
+  buildSynergyCourseMatchMap,
+  getSavedStudentVueGrades,
+  StudentVueGradebookSnapshot,
+  updateStudentVueCourseMapping,
+} from '../services/studentvueGrades';
 import { logger } from '../services/logger';
 import { Loader2, Check, AlertCircle, AlertTriangle, BookOpen, Layers, X, Database } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -171,12 +179,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Navigation State
   const [activeTab, setActiveTab] = useState<'overview' | 'assignments' | 'calendar' | 'modules'>('overview');
   const [assignmentsViewMode, setAssignmentsViewMode] = useState<'list' | 'board'>('list');
+  const [gradeReviewMode, setGradeReviewMode] = useState<'current' | 'timeline'>('current');
 
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
   const [inspectedCourseId, setInspectedCourseId] = useState<number | null>(null);
+  const [inspectorInitialTab, setInspectorInitialTab] = useState<CourseInspectorTab>('breakdown');
+  const [isGradeSyncModalOpen, setIsGradeSyncModalOpen] = useState(false);
+  const [isVerifyModalFromSyncOpen, setIsVerifyModalFromSyncOpen] = useState(false);
+  const [synergySnapshot, setSynergySnapshot] = useState<StudentVueGradebookSnapshot | null>(() =>
+    getSavedStudentVueGrades(currentStudentId)
+  );
+
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
@@ -187,7 +203,31 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   useEffect(() => {
     setGradeConfig(getSavedGradeConfig(currentStudentId));
+    setSynergySnapshot(getSavedStudentVueGrades(currentStudentId));
   }, [currentStudentId]);
+
+  const synergyCourseMap = useMemo(
+    () => buildSynergyCourseMatchMap(data, synergySnapshot),
+    [data, synergySnapshot]
+  );
+
+  const openCourseGradeInspector = useCallback(
+    (courseId: number, initialTab?: CourseInspectorTab) => {
+      setInspectorInitialTab(initialTab || (synergyCourseMap.has(courseId) ? 'synergy' : 'breakdown'));
+      setInspectedCourseId(courseId);
+    },
+    [synergyCourseMap]
+  );
+
+  const handleMapSynergyCourse = useCallback(
+    (canvasCourseId: number, synergyCourseKey: string | null) => {
+      const updated = updateStudentVueCourseMapping(currentStudentId, canvasCourseId, synergyCourseKey);
+      if (updated) {
+        setSynergySnapshot(updated);
+      }
+    },
+    [currentStudentId]
+  );
   
   // Table State
   const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
@@ -1331,7 +1371,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         onSaveCustomization={handleSaveCustomization}
         courseOrder={courseOrder}
         onUpdateCourseOrder={handleUpdateCourseOrder}
-        onInspectCourseGrade={setInspectedCourseId}
+        onInspectCourseGrade={openCourseGradeInspector}
+        synergyCourseMap={synergyCourseMap}
+        synergyPeriodName={synergySnapshot?.reportingPeriodName}
         isMobileOpen={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
       />
@@ -1383,6 +1425,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
             onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
             onOpenMobileSettings={() => setIsMobileSettingsOpen(true)}
             onLogout={onLogout}
+            hasSyncedGrades={Boolean(synergySnapshot)}
+            syncedPeriodName={synergySnapshot?.reportingPeriodName}
+            onOpenSyncGrades={() => setIsGradeSyncModalOpen(true)}
+            onSynergyGradesSynced={(snap) => setSynergySnapshot(snap)}
          />
 
          <main className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-3 sm:p-5 md:p-8 custom-scrollbar relative">
@@ -1448,7 +1494,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       {selectedCourseId !== ALL_COURSES_ID && (
                         <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
                           {showScores && (() => {
-                            const effective = getEffectiveCourseGrade(selectedCourse);
+                            const matchedSynergy = synergyCourseMap.get(selectedCourse.course.id)?.course ?? null;
+                            const effective = getEffectiveCourseGrade(selectedCourse, {
+                              synergyCourse: matchedSynergy,
+                              reportingPeriodName: synergySnapshot?.reportingPeriodName,
+                            });
                             if (!effective || !effective.hasData) {
                               return (
                                 <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500 italic">
@@ -1458,27 +1508,42 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             }
                             const style = getGradeStyle(effective.score, 100, gradeConfig, { isCourseGrade: true });
                             return (
-                              <div 
+                              <button
+                                type="button"
+                                data-testid="course-header-grade-badge"
                                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border shadow-2xs cursor-pointer hover:opacity-90 transition"
                                 style={style.style}
-                                onClick={() => setIsGradeModalOpen(true)}
-                                title="Course grade standing — click to configure thresholds"
+                                onClick={() =>
+                                  openCourseGradeInspector(
+                                    selectedCourse.course.id,
+                                    effective.isOfficial ? 'synergy' : 'breakdown'
+                                  )
+                                }
+                                title={
+                                  effective.isOfficial
+                                    ? `Official StudentVUE grade${effective.officialPeriodName ? ` (${effective.officialPeriodName})` : ''} — click to drill into category & assignment details`
+                                    : 'Course grade standing — click to inspect'
+                                }
                               >
                                 <span className="text-xs font-semibold text-slate-600">Grade:</span>
                                 <span className="text-sm font-bold">{effective.letter || `${effective.score}%`}</span>
                                 {effective.letter && <span className="text-xs opacity-80">({effective.score}%)</span>}
-                                {effective.isEstimated && (
+                                {effective.isOfficial ? (
+                                  <span className="text-[10px] font-bold px-1.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    Official
+                                  </span>
+                                ) : effective.isEstimated ? (
                                   <span className="text-[10px] font-bold px-1 rounded bg-amber-100 text-amber-800 border border-amber-200">
                                     Est
                                   </span>
-                                )}
-                              </div>
+                                ) : null}
+                              </button>
                             );
                           })()}
                           <button
                             type="button"
                             data-testid="course-header-inspect-grade"
-                            onClick={() => setInspectedCourseId(selectedCourse.course.id)}
+                            onClick={() => openCourseGradeInspector(selectedCourse.course.id, 'breakdown')}
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-100 text-blue-700 text-xs font-semibold shadow-2xs transition cursor-pointer"
                             title="Inspect how this course grade is fetched from Canvas or calculated"
                           >
@@ -1517,7 +1582,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                       canvasUrl={canvasUrl}
                                       gradeConfig={gradeConfig}
                                       onOpenGradeSettings={() => setIsGradeModalOpen(true)}
-                                      onInspectCourseGrade={setInspectedCourseId}
+                                      onInspectCourseGrade={openCourseGradeInspector}
+                                      synergySnapshot={synergySnapshot}
+                                      synergyCourseMap={synergyCourseMap}
+                                      onOpenSynergySync={() => setIsGradeSyncModalOpen(true)}
                                       courseCustomizations={courseCustomizations}
                                       onSelectCourse={(courseId) => setSelectedCourseId(courseId)}
                                       onStartTutorial={(tid) => {
@@ -1561,6 +1629,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                       announcements={visibleAnnouncements}
                                       onDismissAnnouncement={handleDismissAnnouncement}
                                       courses={data}
+                                      selectedCourseId={selectedCourseId}
+                                      visibleCourseIds={visibleCourseIds}
+                                      synergySnapshot={synergySnapshot}
+                                      synergyCourseMap={synergyCourseMap}
+                                      onOpenSynergySync={() => setIsGradeSyncModalOpen(true)}
+                                      onInspectCourseGrade={openCourseGradeInspector}
+                                      gradeReviewMode={gradeReviewMode}
+                                      onGradeReviewModeChange={setGradeReviewMode}
                                   />
                                 </ErrorBoundary>
                               ) : (
@@ -1601,6 +1677,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                                     announcements={visibleAnnouncements}
                                     onDismissAnnouncement={handleDismissAnnouncement}
                                     courses={data}
+                                    selectedCourseId={selectedCourseId}
+                                    visibleCourseIds={visibleCourseIds}
+                                    synergySnapshot={synergySnapshot}
+                                    synergyCourseMap={synergyCourseMap}
+                                    onOpenSynergySync={() => setIsGradeSyncModalOpen(true)}
+                                    onInspectCourseGrade={openCourseGradeInspector}
+                                    gradeReviewMode={gradeReviewMode}
+                                    onGradeReviewModeChange={setGradeReviewMode}
                                   />
                                 </ErrorBoundary>
                              )
@@ -1782,6 +1866,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {inspectedCourseId !== null && (() => {
         const targetCourse = data.find(c => c.course.id === inspectedCourseId);
         if (!targetCourse) return null;
+        const match = synergyCourseMap.get(targetCourse.course.id) || null;
         return (
           <CourseGradeInspectorModal
             isOpen={true}
@@ -1792,9 +1877,56 @@ export const Dashboard: React.FC<DashboardProps> = ({
             useProxy={useProxy}
             gradeConfig={gradeConfig}
             showScores={showScores}
+            initialTab={inspectorInitialTab}
+            synergySnapshot={synergySnapshot}
+            matchedSynergyCourse={match?.course ?? null}
+            synergyMatchReason={match?.matchReason}
+            isManualSynergyMatch={Boolean(match?.isManual)}
+            onOpenSynergySync={() => setIsGradeSyncModalOpen(true)}
+            onMapSynergyCourse={handleMapSynergyCourse}
           />
         );
       })()}
+
+      {isGradeSyncModalOpen && (
+        <ErrorBoundary
+          fallbackTitle="StudentVUE Grade Sync Unavailable"
+          resetLabel="Close"
+          modalOverlay
+          onReset={() => setIsGradeSyncModalOpen(false)}
+        >
+          <StudentVueGradeSyncModal
+            isOpen={isGradeSyncModalOpen}
+            onClose={() => setIsGradeSyncModalOpen(false)}
+            studentId={currentStudentId}
+            studentName={currentStudentName || 'Student'}
+            canvasDomain={canvasUrl}
+            currentSnapshot={synergySnapshot}
+            onGradesSynced={(snap) => setSynergySnapshot(snap)}
+            onOpenVerifyModal={() => setIsVerifyModalFromSyncOpen(true)}
+          />
+        </ErrorBoundary>
+      )}
+
+      {isVerifyModalFromSyncOpen && (
+        <ErrorBoundary
+          fallbackTitle="StudentVUE Verification Unavailable"
+          resetLabel="Close"
+          modalOverlay
+          onReset={() => setIsVerifyModalFromSyncOpen(false)}
+        >
+          <StudentVueVerifyModal
+            isOpen={isVerifyModalFromSyncOpen}
+            onClose={() => setIsVerifyModalFromSyncOpen(false)}
+            studentId={currentStudentId}
+            studentName={currentStudentName || 'Student'}
+            canvasDomain={canvasUrl}
+            canvasToken={apiKey}
+            useProxy={useProxy}
+            onGradesSynced={(snap) => setSynergySnapshot(snap)}
+          />
+        </ErrorBoundary>
+      )}
 
       <MobileControlsDrawer
         isOpen={isMobileSettingsOpen}

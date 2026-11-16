@@ -14,39 +14,67 @@ import {
   ChevronUp,
   AlertTriangle,
   Check,
+  Eye,
+  EyeOff,
+  Link2,
+  Unlink,
 } from 'lucide-react';
 import {
   verifyStudentVueAccount,
+  compareStudentProfiles,
   StudentVueVerifyOutcome,
   SYNERGY_ENDPOINT_OPTIONS,
   inferSuggestedSynergyDomain,
+  LinkedStudentVueProfile,
+  getLinkedStudentVueProfile,
+  saveLinkedStudentVueProfile,
+  clearLinkedStudentVueProfile,
 } from '../../services/studentvue';
+import {
+  fetchSynergyGradebookWithSession,
+  saveStudentVueGrades,
+  StudentVueGradebookSnapshot,
+} from '../../services/studentvueGrades';
 import { logger } from '../../services/logger';
 
 interface StudentVueVerifyModalProps {
   isOpen: boolean;
   onClose: () => void;
+  studentId?: string;
   studentName: string;
   canvasDomain?: string;
   canvasToken?: string;
   useProxy?: boolean;
+  onLinkSaved?: (link: LinkedStudentVueProfile | null) => void;
+  onGradesSynced?: (snapshot: StudentVueGradebookSnapshot) => void;
 }
 
-const DEFAULT_API_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCHOOLVIEW_API_URL) ||
-  'http://localhost:8080';
+function resolveDefaultApiUrl(): string {
+  const envUrl =
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SCHOOLVIEW_API_URL) || '';
+  if (envUrl) {
+    return envUrl;
+  }
+  return 'http://localhost:8080';
+}
+
+const DEFAULT_API_URL = resolveDefaultApiUrl();
 
 export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   isOpen,
   onClose,
+  studentId,
   studentName,
   canvasDomain = '',
   canvasToken = '',
   useProxy = true,
+  onLinkSaved,
+  onGradesSynced,
 }) => {
   // Strictly transient in-memory state — never persisted to localStorage or any server
   const [edupointUsername, setEdupointUsername] = useState('');
   const [edupointPassword, setEdupointPassword] = useState('');
+  const [showEdupointPassword, setShowEdupointPassword] = useState(false);
   const [districtDomain, setDistrictDomain] = useState(() => inferSuggestedSynergyDomain(canvasDomain));
   const [isEndpointDropdownOpen, setIsEndpointDropdownOpen] = useState(false);
   const [endpointShowAll, setEndpointShowAll] = useState(false);
@@ -56,9 +84,16 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   const [apiServerUrl, setApiServerUrl] = useState(DEFAULT_API_URL);
   const [apiUsername, setApiUsername] = useState('');
   const [apiPassword, setApiPassword] = useState('');
+  const [showApiPassword, setShowApiPassword] = useState(false);
 
   const [isVerifying, setIsVerifying] = useState(false);
   const [outcome, setOutcome] = useState<StudentVueVerifyOutcome | null>(null);
+  const [savedLink, setSavedLink] = useState<LinkedStudentVueProfile | null>(() =>
+    getLinkedStudentVueProfile(studentId)
+  );
+  const [justSaved, setJustSaved] = useState(false);
+  const [isSyncingGrades, setIsSyncingGrades] = useState(false);
+  const [gradeSyncMessage, setGradeSyncMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const endpointComboboxRef = useRef<HTMLDivElement>(null);
 
@@ -73,19 +108,31 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
     return () => document.removeEventListener('mousedown', handleOutside);
   }, []);
 
-  // Suggest matching Synergy endpoint when opening for a recognized district, clear secrets on close
+  // Load saved link & suggest matching Synergy endpoint on open; clear transient secrets on close
   useEffect(() => {
     if (isOpen) {
-      setDistrictDomain((prev) => prev || inferSuggestedSynergyDomain(canvasDomain));
+      const existing = getLinkedStudentVueProfile(studentId);
+      setSavedLink(existing);
+      setJustSaved(false);
+      if (existing) {
+        if (existing.districtDomain) setDistrictDomain(existing.districtDomain);
+        setIsParent(Boolean(existing.isParent));
+        if (existing.apiServerUrl) setApiServerUrl(existing.apiServerUrl);
+      } else {
+        setDistrictDomain((prev) => prev || inferSuggestedSynergyDomain(canvasDomain));
+      }
     } else {
       setEdupointUsername('');
       setEdupointPassword('');
+      setShowEdupointPassword(false);
       setApiPassword('');
+      setShowApiPassword(false);
       setOutcome(null);
+      setJustSaved(false);
       setIsVerifying(false);
       setIsEndpointDropdownOpen(false);
     }
-  }, [isOpen, canvasDomain]);
+  }, [isOpen, canvasDomain, studentId]);
 
   useEffect(() => {
     return () => {
@@ -115,6 +162,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
 
     setIsVerifying(true);
     setOutcome(null);
+    setJustSaved(false);
 
     try {
       const result = await verifyStudentVueAccount({
@@ -154,11 +202,9 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
       aria-labelledby="studentvue-verify-title"
       data-testid="studentvue-verify-modal"
       className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
-      onClick={onClose}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden text-left max-h-[90vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/80 shrink-0">
@@ -195,6 +241,47 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
           <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-[11px] text-indigo-900 leading-relaxed">
             <strong>Transient only:</strong> Your StudentVUE username and password are never saved on any server or browser storage. They are only used in memory to verify your profile against Canvas.
           </div>
+
+          {savedLink && (
+            <div
+              data-testid="saved-studentvue-link-banner"
+              className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl text-[11px] flex items-start justify-between gap-2"
+            >
+              <div className="space-y-0.5 min-w-0">
+                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>
+                    Saved StudentVUE Match: {savedLink.studentName || 'Student'}
+                    {savedLink.permId ? ` (PermID ${savedLink.permId})` : ''}
+                  </span>
+                </div>
+                <div className="text-emerald-800 truncate">
+                  {[
+                    savedLink.isParent ? 'ParentVUE' : 'StudentVUE',
+                    savedLink.districtDomain,
+                    savedLink.school,
+                    savedLink.grade ? `Grade ${savedLink.grade}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' • ')}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  clearLinkedStudentVueProfile(studentId);
+                  setSavedLink(null);
+                  setJustSaved(false);
+                  onLinkSaved?.(null);
+                }}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white border border-emerald-200 text-emerald-800 hover:text-red-700 hover:border-red-200 text-[10px] font-semibold transition cursor-pointer shrink-0"
+                title="Remove saved StudentVUE link"
+              >
+                <Unlink className="w-3 h-3" />
+                Unlink
+              </button>
+            </div>
+          )}
 
           {/* Account Type Toggle */}
           <div className="flex items-center gap-2">
@@ -346,14 +433,27 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                 <input
-                  type="password"
+                  type={showEdupointPassword ? 'text' : 'password'}
                   autoComplete="new-password"
                   placeholder="Password (transient)"
                   value={edupointPassword}
                   onChange={(e) => setEdupointPassword(e.target.value)}
-                  className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                  className="w-full text-xs pl-8 pr-8 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                   required
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowEdupointPassword((prev) => !prev)}
+                  aria-label={showEdupointPassword ? 'Hide Vue password' : 'Show Vue password'}
+                  title={showEdupointPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-2 top-1.5 p-1 text-slate-400 hover:text-indigo-600 rounded-lg transition cursor-pointer"
+                >
+                  {showEdupointPassword ? (
+                    <EyeOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5" />
+                  )}
+                </button>
               </div>
             </div>
           </div>
@@ -383,8 +483,8 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                     API Server URL
                   </label>
                   <input
-                    type="url"
-                    placeholder="http://localhost:8080"
+                    type="text"
+                    placeholder="/api/studentvue or http://localhost:8080"
                     value={apiServerUrl}
                     onChange={(e) => setApiServerUrl(e.target.value)}
                     className="w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:border-indigo-500 font-mono"
@@ -410,15 +510,30 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       API Password
                     </label>
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder="API user password"
-                      value={apiPassword}
-                      onChange={(e) => setApiPassword(e.target.value)}
-                      className="w-full text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:border-indigo-500"
-                      required
-                    />
+                    <div className="relative">
+                      <input
+                        type={showApiPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        placeholder="API user password"
+                        value={apiPassword}
+                        onChange={(e) => setApiPassword(e.target.value)}
+                        className="w-full text-xs pl-3 pr-8 py-1.5 rounded-lg border border-slate-300 focus:outline-hidden focus:border-indigo-500"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiPassword((prev) => !prev)}
+                        aria-label={showApiPassword ? 'Hide API password' : 'Show API password'}
+                        title={showApiPassword ? 'Hide password' : 'Show password'}
+                        className="absolute right-1.5 top-1 p-1 text-slate-400 hover:text-indigo-600 rounded-md transition cursor-pointer"
+                      >
+                        {showApiPassword ? (
+                          <EyeOff className="w-3.5 h-3.5" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -447,6 +562,13 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             const warnings = Array.isArray(cmp.warnings) ? cmp.warnings : [];
             const canvasProf = cmp.canvasProfile || {};
             const svProf = cmp.studentVueProfile || {};
+            const availableStudents = Array.isArray(cmp.availableStudents) ? cmp.availableStudents : [];
+            const selectedIndex =
+              typeof cmp.selectedStudentIndex === 'number' &&
+              cmp.selectedStudentIndex >= 0 &&
+              cmp.selectedStudentIndex < availableStudents.length
+                ? cmp.selectedStudentIndex
+                : 0;
 
             return (
               <div
@@ -469,10 +591,72 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                         : 'Account Mismatch Detected'}
                     </div>
                     <div className="text-[11px] text-slate-600">
-                      {matchReasons.join(' • ') || mismatchReasons.join(' • ') || 'Comparison completed.'}
+                      {cmp.matched
+                        ? matchReasons.join(' • ') || 'Comparison completed.'
+                        : mismatchReasons.join(' • ') || matchReasons.join(' • ') || 'Comparison completed.'}
                     </div>
                   </div>
                 </div>
+
+                {!cmp.matched && matchReasons.length > 0 && mismatchReasons.length > 0 && (
+                  <div className="text-[11px] text-emerald-800 flex items-start gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Matched signals: {matchReasons.join(' • ')}</span>
+                  </div>
+                )}
+
+                {availableStudents.length > 1 && (
+                  <div className="bg-white/90 rounded-lg p-2.5 border border-slate-200/80 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="parentvue-student-select"
+                        className="text-[11px] font-bold text-slate-700"
+                      >
+                        ParentVUE Student
+                      </label>
+                      <span className="text-[10px] font-medium text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded">
+                        {cmp.matched
+                          ? `Auto-matched from ${availableStudents.length} ParentVUE students`
+                          : `Showing student ${selectedIndex + 1} of ${availableStudents.length} — select another below`}
+                      </span>
+                    </div>
+                    <select
+                      id="parentvue-student-select"
+                      data-testid="parentvue-student-select"
+                      value={selectedIndex}
+                      onChange={(e) => {
+                        const nextIdx = Number(e.target.value);
+                        const chosen = availableStudents[nextIdx];
+                        if (!chosen) return;
+                        const recomputed = compareStudentProfiles(canvasProf, chosen);
+                        setJustSaved(false);
+                        setOutcome({
+                          ok: true,
+                          comparison: {
+                            ...recomputed,
+                            availableStudents,
+                            selectedStudentIndex: nextIdx,
+                          },
+                        });
+                      }}
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 focus:outline-hidden focus:border-indigo-500"
+                    >
+                      {availableStudents.map((st, idx) => {
+                        const parts = [
+                          st.name || `Student ${idx + 1}`,
+                          st.permId ? `ID: ${st.permId}` : null,
+                          st.grade ? `Grade ${st.grade}` : null,
+                          st.school || null,
+                        ].filter(Boolean);
+                        return (
+                          <option key={`${st.permId || st.name || 'stu'}-${idx}`} value={idx}>
+                            {parts.join(' • ')}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
 
                 {mismatchReasons.length > 0 && cmp.matched && (
                   <div className="text-[11px] text-amber-800 flex items-start gap-1.5">
@@ -513,7 +697,138 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                     <div className="text-slate-600 truncate">
                       School: {svProf.school || '—'}
                     </div>
+                    {svProf.grade && (
+                      <div className="text-slate-600 truncate">
+                        Grade: {svProf.grade}
+                      </div>
+                    )}
                   </div>
+                </div>
+
+                {/* Confirm & Save Match (+ immediate Official Grade Sync if transient session is open) */}
+                <div className="pt-2 border-t border-slate-200/70 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-600">
+                      {justSaved
+                        ? `Match saved for ${studentName}.`
+                        : 'Save this StudentVUE student link for official grade sync.'}
+                    </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        data-testid="confirm-save-studentvue-match"
+                        onClick={() => {
+                          const saved = saveLinkedStudentVueProfile(studentId, {
+                            confirmedAt: new Date().toISOString(),
+                            districtDomain,
+                            isParent,
+                            apiServerUrl,
+                            studentName: svProf.name,
+                            permId: svProf.permId,
+                            school: svProf.school,
+                            grade: svProf.grade,
+                            agu: svProf.agu,
+                            confidence: cmp.confidence,
+                            matched: cmp.matched,
+                          });
+                          setSavedLink(saved);
+                          setJustSaved(true);
+                          onLinkSaved?.(saved);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer inline-flex items-center gap-1.5 ${
+                          justSaved
+                            ? 'bg-emerald-600 text-white'
+                            : cmp.matched
+                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                            : 'bg-amber-600 hover:bg-amber-700 text-white shadow-2xs'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        {justSaved
+                          ? 'Match Saved'
+                          : cmp.matched
+                          ? 'Confirm & Save Match'
+                          : 'Confirm & Save Selection'}
+                      </button>
+
+                      {outcome.transientSession && onGradesSynced && (
+                        <button
+                          type="button"
+                          disabled={isSyncingGrades}
+                          data-testid="save-match-and-sync-grades"
+                          onClick={async () => {
+                            const saved = saveLinkedStudentVueProfile(studentId, {
+                              confirmedAt: new Date().toISOString(),
+                              districtDomain,
+                              isParent,
+                              apiServerUrl,
+                              studentName: svProf.name,
+                              permId: svProf.permId,
+                              school: svProf.school,
+                              grade: svProf.grade,
+                              agu: svProf.agu,
+                              confidence: cmp.confidence,
+                              matched: cmp.matched,
+                            });
+                            setSavedLink(saved);
+                            setJustSaved(true);
+                            onLinkSaved?.(saved);
+
+                            setIsSyncingGrades(true);
+                            setGradeSyncMessage(null);
+                            try {
+                              const res = await fetchSynergyGradebookWithSession({
+                                ...outcome.transientSession!,
+                                districtDomain,
+                                isParent,
+                                agu: svProf.agu,
+                                permId: svProf.permId,
+                                studentName: svProf.name,
+                              });
+                              if (!res.ok) {
+                                setGradeSyncMessage({
+                                  ok: false,
+                                  text: 'error' in res ? res.error : 'Failed to sync grades.',
+                                });
+                              } else {
+                                const persisted = saveStudentVueGrades(studentId, res.snapshot);
+                                onGradesSynced(persisted);
+                                setGradeSyncMessage({
+                                  ok: true,
+                                  text: `Synced ${persisted.courses.length} course(s)${
+                                    persisted.reportingPeriodName ? ` (${persisted.reportingPeriodName})` : ''
+                                  }.`,
+                                });
+                              }
+                            } finally {
+                              setIsSyncingGrades(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white shadow-2xs transition cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          {isSyncingGrades ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Syncing Grades...
+                            </>
+                          ) : (
+                            'Save Match & Sync Grades'
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {gradeSyncMessage && (
+                    <div
+                      className={`text-[11px] px-2.5 py-1.5 rounded-lg border ${
+                        gradeSyncMessage.ok
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          : 'bg-red-50 border-red-200 text-red-800'
+                      }`}
+                    >
+                      {gradeSyncMessage.text}
+                    </div>
+                  )}
                 </div>
               </div>
             );

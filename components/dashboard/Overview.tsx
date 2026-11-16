@@ -18,6 +18,7 @@ import {
   ChevronDown,
   MapPin,
   Database,
+  RefreshCw,
 } from 'lucide-react';
 import { getCourseIdFromEvent, getCourseIdFromAnnouncement } from '../../services/canvas';
 import {
@@ -32,6 +33,10 @@ import { getEffectiveCourseGrade } from '../../utils/gradeInspector';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { CourseCustomization } from '../../services/courseCustomization';
+import {
+  StudentVueCourseMatch,
+  StudentVueGradebookSnapshot,
+} from '../../services/studentvueGrades';
 import { TutorialId } from './InteractiveTutorialModal';
 
 interface OverviewProps {
@@ -50,7 +55,10 @@ interface OverviewProps {
   canvasUrl?: string;
   gradeConfig?: GradeScaleConfig;
   onOpenGradeSettings?: () => void;
-  onInspectCourseGrade?: (courseId: number) => void;
+  onInspectCourseGrade?: (courseId: number, initialTab?: 'breakdown' | 'synergy' | 'raw') => void;
+  synergySnapshot?: StudentVueGradebookSnapshot | null;
+  synergyCourseMap?: Map<number, StudentVueCourseMatch>;
+  onOpenSynergySync?: () => void;
   courseCustomizations?: Record<number, CourseCustomization>;
   onSelectCourse?: (courseId: number) => void;
   onStartTutorial?: (tutorialId?: TutorialId) => void;
@@ -80,6 +88,9 @@ export const Overview: React.FC<OverviewProps> = ({
   gradeConfig = DEFAULT_GRADE_CONFIG,
   onOpenGradeSettings,
   onInspectCourseGrade,
+  synergySnapshot = null,
+  synergyCourseMap,
+  onOpenSynergySync,
   courseCustomizations,
   onSelectCourse,
   onStartTutorial,
@@ -89,7 +100,11 @@ export const Overview: React.FC<OverviewProps> = ({
 
   const isMultiCourse = course.course.id === ALL_COURSES_ID;
 
-  const getEffectiveGrade = (c: CourseData) => getEffectiveCourseGrade(c);
+  const getEffectiveGrade = (c: CourseData) =>
+    getEffectiveCourseGrade(c, {
+      synergyCourse: synergyCourseMap?.get(c.course.id)?.course ?? null,
+      reportingPeriodName: synergySnapshot?.reportingPeriodName,
+    });
 
   const singleGradeInfo = getEffectiveGrade(course);
   const notSubmittedCount = (course?.assignments || []).filter((a) => {
@@ -254,8 +269,26 @@ export const Overview: React.FC<OverviewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* Grade Card */}
         <div
-          className="bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 flex items-center justify-between group relative"
-          title="Course Grade Summary"
+          className={`bg-white px-4 py-3 rounded-xl shadow-xs border border-slate-200/90 flex items-center justify-between group relative ${
+            !isMultiCourse && onInspectCourseGrade
+              ? 'cursor-pointer hover:border-emerald-300 hover:shadow-xs transition-all'
+              : ''
+          }`}
+          onClick={() => {
+            if (!isMultiCourse && onInspectCourseGrade) {
+              onInspectCourseGrade(
+                course.course.id,
+                singleGradeInfo?.isOfficial ? 'synergy' : 'breakdown'
+              );
+            }
+          }}
+          title={
+            !isMultiCourse
+              ? singleGradeInfo?.isOfficial
+                ? 'Official StudentVUE course grade — click to drill into weighted categories and Synergy items'
+                : 'Course Grade Summary — click to inspect'
+              : 'Course Grade Summary'
+          }
         >
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-slate-100 text-slate-600 shrink-0">
@@ -265,7 +298,7 @@ export const Overview: React.FC<OverviewProps> = ({
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                 {isMultiCourse ? 'Active Courses' : 'Current Grade'}
               </div>
-              <div className="flex items-baseline gap-1.5 mt-0.5">
+              <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
                 {isMultiCourse ? (
                   <span className="text-xl font-bold text-slate-900">
                     {allCoursesData.length} classes
@@ -286,14 +319,23 @@ export const Overview: React.FC<OverviewProps> = ({
                         <span className={`text-xs font-bold px-1.5 py-0.2 rounded ${style.badgeClass}`}>
                           {singleGradeInfo.letter || style.letter}
                         </span>
-                        {singleGradeInfo.isEstimated && (
+                        {singleGradeInfo.isOfficial ? (
+                          <span
+                            className="text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 rounded font-semibold"
+                            title={`Official StudentVUE grade${
+                              singleGradeInfo.officialPeriodName ? ` (${singleGradeInfo.officialPeriodName})` : ''
+                            }`}
+                          >
+                            Official
+                          </span>
+                        ) : singleGradeInfo.isEstimated ? (
                           <span
                             className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help"
                             title="Estimated Course Grade: Canvas does not provide an official course grade for this class, so this is calculated as a heuristic unweighted average of your graded assignments."
                           >
                             Est
                           </span>
-                        )}
+                        ) : null}
                       </>
                     );
                   })()
@@ -311,18 +353,31 @@ export const Overview: React.FC<OverviewProps> = ({
               <button
                 type="button"
                 data-testid="overview-inspect-single-grade"
-                onClick={() => onInspectCourseGrade(course.course.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onInspectCourseGrade(
+                    course.course.id,
+                    singleGradeInfo?.isOfficial ? 'synergy' : 'breakdown'
+                  );
+                }}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold text-blue-600 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100 border border-blue-200/80 transition cursor-pointer"
-                title="Inspect how this course grade is fetched or calculated"
+                title={
+                  singleGradeInfo?.isOfficial
+                    ? 'Open Official Synergy Gradebook details and Canvas diagnostics'
+                    : 'Inspect how this course grade is fetched or calculated'
+                }
               >
                 <Database className="w-3 h-3" />
-                <span>Inspect</span>
+                <span>{singleGradeInfo?.isOfficial ? 'Details' : 'Inspect'}</span>
               </button>
             )}
             {onOpenGradeSettings && (
               <button
                 type="button"
-                onClick={onOpenGradeSettings}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenGradeSettings();
+                }}
                 className="p-1 rounded-md text-slate-300 hover:text-slate-600 hover:bg-slate-100 transition opacity-0 group-hover:opacity-100 cursor-pointer"
                 title="Configure Grade Threshold Colors"
               >
@@ -663,22 +718,41 @@ export const Overview: React.FC<OverviewProps> = ({
       {/* Multi-Course View: Course Grade & Workload Grid */}
       {isMultiCourse && allCoursesData.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-bold text-slate-900 text-sm">
-                Course Academic Standing & Workload
+                Course Academic Standing &amp; Workload
               </h3>
+              {synergySnapshot && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  Synergy Official
+                  {synergySnapshot.reportingPeriodName ? ` · ${synergySnapshot.reportingPeriodName}` : ''}
+                </span>
+              )}
             </div>
-            {onOpenGradeSettings && (
-              <button
-                type="button"
-                onClick={onOpenGradeSettings}
-                className="text-xs font-semibold text-slate-600 hover:text-blue-600 flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition cursor-pointer"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Grade Scales</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              {onOpenSynergySync && (
+                <button
+                  type="button"
+                  data-testid="overview-sync-official-grades"
+                  onClick={onOpenSynergySync}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center gap-1.5 px-2.5 py-1 rounded-lg transition cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>{synergySnapshot ? 'Refresh Official Grades' : 'Sync Official Grades'}</span>
+                </button>
+              )}
+              {onOpenGradeSettings && (
+                <button
+                  type="button"
+                  onClick={onOpenGradeSettings}
+                  className="text-xs font-semibold text-slate-600 hover:text-blue-600 flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition cursor-pointer"
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  <span>Grade Scales</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -717,7 +791,7 @@ export const Overview: React.FC<OverviewProps> = ({
                         const style = getGradeStyle(gradeInfo.score, 100, gradeConfig, {
                           isCourseGrade: true,
                         });
-                        return (
+                        const badgeContent = (
                           <div className="flex items-center gap-1.5 shrink-0 tabular-nums">
                             <span
                               className="text-xs font-bold w-12 text-right"
@@ -730,8 +804,17 @@ export const Overview: React.FC<OverviewProps> = ({
                             >
                               {gradeInfo.letter || style.letter}
                             </span>
-                            <span className="w-7 flex justify-center shrink-0">
-                              {gradeInfo.isEstimated ? (
+                            <span className="w-11 flex justify-center shrink-0">
+                              {gradeInfo.isOfficial ? (
+                                <span
+                                  className="text-[9px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1 rounded font-semibold"
+                                  title={`Official StudentVUE grade${
+                                    gradeInfo.officialPeriodName ? ` (${gradeInfo.officialPeriodName})` : ''
+                                  } — click to view category weights & assignments`}
+                                >
+                                  Official
+                                </span>
+                              ) : gradeInfo.isEstimated ? (
                                 <span
                                   className="text-[9px] text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded font-medium cursor-help"
                                   title="Estimated Course Grade: Canvas does not provide an official course grade for this class, so this is calculated as a heuristic unweighted average of your graded assignments."
@@ -742,13 +825,35 @@ export const Overview: React.FC<OverviewProps> = ({
                             </span>
                           </div>
                         );
+
+                        if (onInspectCourseGrade) {
+                          return (
+                            <button
+                              type="button"
+                              data-testid={`overview-grade-drill-${c.course.id}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onInspectCourseGrade(
+                                  c.course.id,
+                                  gradeInfo.isOfficial ? 'synergy' : 'breakdown'
+                                );
+                              }}
+                              className="rounded-lg px-1 py-0.5 -mr-1 hover:bg-slate-100 transition cursor-pointer"
+                              title={`Click to view ${displayName}'s grade details`}
+                            >
+                              {badgeContent}
+                            </button>
+                          );
+                        }
+
+                        return badgeContent;
                       })()
                     ) : (
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[11px] text-slate-400 italic">
                           {!showScores ? 'Hidden' : 'No Data'}
                         </span>
-                        <span className="w-7 shrink-0" aria-hidden="true" />
+                        <span className="w-11 shrink-0" aria-hidden="true" />
                       </div>
                     )}
                   </div>
@@ -764,7 +869,7 @@ export const Overview: React.FC<OverviewProps> = ({
                           data-testid={`overview-inspect-grade-${c.course.id}`}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onInspectCourseGrade(c.course.id);
+                            onInspectCourseGrade(c.course.id, 'breakdown');
                           }}
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-blue-200/70 transition cursor-pointer"
                           title={`Inspect how ${displayName}'s grade is fetched or calculated`}

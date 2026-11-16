@@ -25,6 +25,13 @@ import {
 } from '../../services/gradeScale';
 import { inspectCourseGrade } from '../../utils/gradeInspector';
 import { formatSubmissionType } from '../../utils/dashboard-helpers';
+import {
+  StudentVueCourseGrade,
+  StudentVueGradebookSnapshot,
+} from '../../services/studentvueGrades';
+import { SynergyGradeDetailPanel } from './SynergyGradeDetailPanel';
+
+export type CourseInspectorTab = 'breakdown' | 'synergy' | 'raw';
 
 interface CourseGradeInspectorModalProps {
   isOpen: boolean;
@@ -36,9 +43,15 @@ interface CourseGradeInspectorModalProps {
   gradeConfig?: GradeScaleConfig;
   showScores?: boolean;
   onLiveDiagnosticsLoaded?: (result: CourseGradeDiagnosticsResult) => void;
+  initialTab?: CourseInspectorTab;
+  synergySnapshot?: StudentVueGradebookSnapshot | null;
+  matchedSynergyCourse?: StudentVueCourseGrade | null;
+  synergyMatchReason?: string;
+  isManualSynergyMatch?: boolean;
+  onOpenSynergySync?: () => void;
+  onMapSynergyCourse?: (canvasCourseId: number, synergyCourseKey: string | null) => void;
 }
 
-type InspectorTab = 'breakdown' | 'raw';
 type AssignmentFilterMode = 'all' | 'included' | 'zero_or_missing' | 'excluded';
 
 const formatScoreVal = (score: number | null | undefined, grade?: string | null): string => {
@@ -69,8 +82,15 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
   gradeConfig = DEFAULT_GRADE_CONFIG,
   showScores = true,
   onLiveDiagnosticsLoaded,
+  initialTab,
+  synergySnapshot = null,
+  matchedSynergyCourse = null,
+  synergyMatchReason,
+  isManualSynergyMatch = false,
+  onOpenSynergySync,
+  onMapSynergyCourse,
 }) => {
-  const [activeTab, setActiveTab] = useState<InspectorTab>('breakdown');
+  const [activeTab, setActiveTab] = useState<CourseInspectorTab>(initialTab || 'breakdown');
   const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilterMode>('all');
   const [liveDiagnostics, setLiveDiagnostics] = useState<CourseGradeDiagnosticsResult | null>(null);
   const [fetchingLive, setFetchingLive] = useState(false);
@@ -88,12 +108,12 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
   useEffect(() => {
     setLiveDiagnostics(null);
     setFetchError(null);
-    setActiveTab('breakdown');
+    setActiveTab(initialTab || 'breakdown');
     setAssignmentFilter(inspection.assignments.length > 12 ? 'included' : 'all');
     setCopiedJson(false);
     setExpandedGradedJsonIds(new Set());
     setShowRawUngraded(false);
-  }, [courseData.course.id, isOpen]);
+  }, [courseData.course.id, isOpen, initialTab]);
 
   // Close on Escape
   useEffect(() => {
@@ -192,9 +212,22 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
     }
   };
 
+  const synergyDisplayedScore =
+    matchedSynergyCourse && typeof matchedSynergyCourse.scorePercent === 'number' && Number.isFinite(matchedSynergyCourse.scorePercent)
+      ? matchedSynergyCourse.scorePercent
+      : null;
+
+  const effectiveDisplayedScore = synergyDisplayedScore ?? inspection.displayed.score;
+  const effectiveDisplayedLetter =
+    synergyDisplayedScore !== null
+      ? matchedSynergyCourse?.letterGrade
+      : inspection.displayed.letter;
+  const effectiveHasData = synergyDisplayedScore !== null || inspection.displayed.hasData;
+  const effectiveIsOfficial = synergyDisplayedScore !== null;
+
   const displayedStyle =
-    inspection.displayed.score !== null
-      ? getGradeStyle(inspection.displayed.score, 100, gradeConfig, { isCourseGrade: true })
+    effectiveDisplayedScore !== null
+      ? getGradeStyle(effectiveDisplayedScore, 100, gradeConfig, { isCourseGrade: true })
       : null;
 
   const zeroOrMissingCount = inspection.assignments.filter(
@@ -202,8 +235,9 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
   ).length;
 
   const isSuppressed =
-    inspection.displayed.source === 'suppressed_zero_ungraded' ||
-    inspection.displayed.source === 'suppressed_zero_unreliable';
+    !effectiveIsOfficial &&
+    (inspection.displayed.source === 'suppressed_zero_ungraded' ||
+      inspection.displayed.source === 'suppressed_zero_unreliable');
 
   return (
     <div
@@ -238,11 +272,23 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
               )}
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Ground-truth audit of Canvas enrollment scores, grading coverage, and individual graded work.
+              Official StudentVUE gradebook details, Canvas enrollment audit, and grading coverage.
             </p>
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            {onOpenSynergySync && (
+              <button
+                type="button"
+                onClick={onOpenSynergySync}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition cursor-pointer"
+                title="Sync official course grades, categories, and assignments from StudentVUE"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>{synergySnapshot ? 'Sync Synergy' : 'Sync Official Grades'}</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={handleFetchLive}
@@ -331,26 +377,30 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
                   Displayed in Dashboard
                 </div>
                 <div className="mt-2 flex items-baseline gap-2 flex-wrap">
-                  {inspection.displayed.hasData && inspection.displayed.score !== null ? (
+                  {effectiveHasData && effectiveDisplayedScore !== null ? (
                     <>
                       <span
                         className="text-2xl font-extrabold tabular-nums"
                         style={{ color: displayedStyle?.style.color || undefined }}
                       >
-                        {inspection.displayed.score}%
+                        {effectiveDisplayedScore}%
                       </span>
                       <span
                         className={`text-xs font-bold px-2 py-0.5 rounded ${
                           displayedStyle?.badgeClass || 'bg-slate-200 text-slate-700'
                         }`}
                       >
-                        {inspection.displayed.letter || displayedStyle?.letter}
+                        {effectiveDisplayedLetter || displayedStyle?.letter}
                       </span>
-                      {inspection.displayed.isEstimated && (
+                      {effectiveIsOfficial ? (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                          Official (Synergy)
+                        </span>
+                      ) : inspection.displayed.isEstimated ? (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
                           Calculated Est
                         </span>
-                      )}
+                      ) : null}
                     </>
                   ) : (
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -366,7 +416,7 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
                     </div>
                   )}
                 </div>
-                {inspection.displayed.suppressionReason && (
+                {!effectiveIsOfficial && inspection.displayed.suppressionReason && (
                   <p className="text-[11px] text-slate-600 mt-1.5 leading-snug">
                     {inspection.displayed.suppressionReason}
                   </p>
@@ -374,7 +424,11 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
               </div>
               <div className="mt-3 pt-2.5 border-t border-slate-200/70 text-[11px] text-slate-600">
                 <span className="font-semibold">Rule: </span>
-                <span>{inspection.displayed.sourceLabel}</span>
+                <span>
+                  {effectiveIsOfficial
+                    ? `Official StudentVUE / Synergy (${synergySnapshot?.reportingPeriodName || matchedSynergyCourse?.markName || 'Current'})`
+                    : inspection.displayed.sourceLabel}
+                </span>
               </div>
             </div>
 
@@ -597,9 +651,28 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
 
           {/* Segmented Tabs */}
           <div className="flex items-center justify-between gap-2 border-b border-slate-200 pb-2 flex-wrap">
-            <div className="inline-flex rounded-lg bg-slate-100 p-1 gap-1">
+            <div className="inline-flex rounded-lg bg-slate-100 p-1 gap-1 flex-wrap">
               <button
                 type="button"
+                data-testid="inspector-tab-synergy"
+                onClick={() => setActiveTab('synergy')}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                  activeTab === 'synergy'
+                    ? 'bg-white text-emerald-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Official Gradebook (Synergy)</span>
+                {matchedSynergyCourse && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800">
+                    {matchedSynergyCourse.assignments.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                data-testid="inspector-tab-breakdown"
                 onClick={() => setActiveTab('breakdown')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
                   activeTab === 'breakdown'
@@ -612,6 +685,7 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
               </button>
               <button
                 type="button"
+                data-testid="inspector-tab-raw"
                 onClick={() => setActiveTab('raw')}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
                   activeTab === 'raw'
@@ -629,7 +703,23 @@ export const CourseGradeInspectorModal: React.FC<CourseGradeInspectorModalProps>
             </div>
           </div>
 
-          {activeTab === 'breakdown' ? (
+          {activeTab === 'synergy' ? (
+            <SynergyGradeDetailPanel
+              canvasCourseId={courseData.course.id}
+              canvasCourseName={inspection.courseName}
+              canvasEffectiveScore={inspection.displayed.score}
+              canvasEffectiveLetter={inspection.displayed.letter}
+              canvasIsEstimated={inspection.displayed.isEstimated}
+              synergySnapshot={synergySnapshot}
+              matchedSynergyCourse={matchedSynergyCourse}
+              synergyMatchReason={synergyMatchReason}
+              isManualSynergyMatch={isManualSynergyMatch}
+              gradeConfig={gradeConfig}
+              showScores={showScores}
+              onOpenSynergySync={onOpenSynergySync}
+              onMapSynergyCourse={onMapSynergyCourse}
+            />
+          ) : activeTab === 'breakdown' ? (
             <div className="space-y-5">
               {/* Highlighted Graded Work Detail Cards */}
               <div

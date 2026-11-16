@@ -137,11 +137,13 @@ export const removeStudent = (id: string): void => {
   const filtered = students.filter(s => s.id !== id);
   persistStudents(filtered);
   
-  // Clean up feedback ack, dismissed announcement & workspace settings storage for that student
+  // Clean up feedback ack, dismissed announcement, workspace settings & StudentVUE link/grades storage for that student
   try {
     localStorage.removeItem(`${FEEDBACK_ACK_PREFIX}${id}`);
     localStorage.removeItem(`${DISMISSED_ANNOUNCEMENTS_PREFIX}${id}`);
     localStorage.removeItem(`${WORKSPACE_SETTINGS_PREFIX}${id}`);
+    localStorage.removeItem(`velm_studentvue_link_v1_${id}`);
+    localStorage.removeItem(`velm_studentvue_grades_v1_${id}`);
   } catch {
     // ignore
   }

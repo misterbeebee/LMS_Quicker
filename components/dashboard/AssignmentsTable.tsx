@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { CanvasAssignment, CanvasTodoItem, CanvasAnnouncement, SortKey, SortConfig, FilterMode, CourseData } from '../../types';
-import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, CheckCircle2, Megaphone, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Lock, Unlock, ArrowUpDown, ArrowUp, ArrowDown, Filter, X, ExternalLink, Archive, ArchiveRestore, ToggleLeft, ToggleRight, CheckSquare, Calendar, MapPin, ChevronDown, ChevronRight, Maximize2, MessageSquare, FileText, HelpCircle, Check, Settings, Languages, CheckCircle2, Megaphone, Loader2, Columns2 } from 'lucide-react';
 import { stripHtml, formatSubmissionType, getAssignmentStatus, getFilterValue, getRowMeta, isAssignmentSubmitted, isAssignmentObsolete, isFillerDescription, cleanAssignmentDescription, hasUnacknowledgedFeedback, getUnacknowledgedFeedbackCount, isAssignmentPastDue, isAssignmentLocked, isPresumedCompleted, isClassworkOnPaper, getAssignmentLockInfo, getAssignmentFeedbackComments, formatPoints, formatRelativeDueDate, formatCalendarEventDate, isPastCalendarEvent } from '../../utils/dashboard-helpers';
 import { pruneCourseTitle } from '../../utils/courseAbbreviations';
 import { AssignmentDetailFlipSide } from './AssignmentDetailFlipSide';
@@ -11,6 +11,8 @@ import { TranslationModal } from './TranslationModal';
 import { detectWorldLanguage, WorldLanguageMatch, isItemTranslated, isTranslationInProgress } from '../../services/translation';
 import { GradeScaleConfig, DEFAULT_GRADE_CONFIG, getGradeStyle } from '../../services/gradeScale';
 import { CourseCustomization } from '../../services/courseCustomization';
+import { StudentVueCourseMatch, StudentVueGradebookSnapshot } from '../../services/studentvueGrades';
+import { RecentGradesTimeline } from './RecentGradesTimeline';
 import { useNow } from '../../utils/useRelativeTime';
 import { extractAssignmentFromTodo, getCalendarEventWebUrl } from '../../utils/canvasUrls';
 import { AnnouncementsWidget } from './AnnouncementsWidget';
@@ -51,6 +53,14 @@ interface AssignmentsTableProps {
   onDismissAnnouncement?: (announcement: CanvasAnnouncement) => Promise<void>;
   courseCustomizations?: Record<number, CourseCustomization>;
   courses?: CourseData[];
+  selectedCourseId?: number | null;
+  visibleCourseIds?: Set<number>;
+  synergySnapshot?: StudentVueGradebookSnapshot | null;
+  synergyCourseMap?: Map<number, StudentVueCourseMatch>;
+  onOpenSynergySync?: () => void;
+  onInspectCourseGrade?: (courseId: number, initialTab?: 'breakdown' | 'synergy' | 'raw') => void;
+  gradeReviewMode?: 'current' | 'timeline';
+  onGradeReviewModeChange?: (mode: 'current' | 'timeline') => void;
 }
 
 export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
@@ -88,11 +98,22 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
   onMarkTodoDone,
   announcements = [],
   onDismissAnnouncement,
-  courses = []
+  courses = [],
+  selectedCourseId = null,
+  visibleCourseIds,
+  synergySnapshot = null,
+  synergyCourseMap,
+  onOpenSynergySync,
+  onInspectCourseGrade,
+  gradeReviewMode,
+  onGradeReviewModeChange,
 }) => {
   const now = useNow();
   const [activeFilterColumn, setActiveFilterColumn] = useState<string | null>(null);
   const [workflowSection, setWorkflowSection] = useState<'upcoming' | 'completed'>('upcoming');
+  const [localGradeReviewMode, setLocalGradeReviewMode] = useState<'current' | 'timeline'>('current');
+  const activeGradeReviewMode = gradeReviewMode ?? localGradeReviewMode;
+  const setGradeReviewMode = onGradeReviewModeChange ?? setLocalGradeReviewMode;
   const [isTodoExpanded, setIsTodoExpanded] = useState(false);
   const [processingTodoKey, setProcessingTodoKey] = useState<string | null>(null);
   const [expandedRowIds, setExpandedRowIds] = useState<Set<number>>(new Set());
@@ -469,8 +490,43 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
           </button>
         </div>
 
-        {/* Feedback to Review Filter */}
-        <div className="flex items-center gap-2">
+        {/* Secondary Controls: Grade Review Mode Toggle (in Completed) & Feedback to Review */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {workflowSection === 'completed' && (
+            <div
+              className="inline-flex items-center gap-1 p-0.5 bg-slate-100 rounded-xl border border-slate-200/80 shadow-2xs"
+              role="group"
+              aria-label="Assignment grade review view mode"
+            >
+              <button
+                type="button"
+                data-testid="toggle-grade-review-current"
+                onClick={() => setGradeReviewMode('current')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                  activeGradeReviewMode === 'current'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="View standard Canvas Completed & Graded table"
+              >
+                Current View
+              </button>
+              <button
+                type="button"
+                data-testid="toggle-grade-review-timeline"
+                onClick={() => setGradeReviewMode('timeline')}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition cursor-pointer inline-flex items-center gap-1.5 ${
+                  activeGradeReviewMode === 'timeline'
+                    ? 'bg-white text-emerald-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Compare Canvas work and official Synergy grades side-by-side in a date-aligned timeline"
+              >
+                <Columns2 className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Side-by-Side (Synergy)</span>
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={toggleFeedbackFilter}
@@ -789,6 +845,27 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         </div>
       )}
 
+      {workflowSection === 'completed' && activeGradeReviewMode === 'timeline' ? (
+        <RecentGradesTimeline
+          assignments={assignments}
+          courses={courses}
+          selectedCourseId={selectedCourseId}
+          visibleCourseIds={visibleCourseIds}
+          getCourseName={getCourseName}
+          courseCustomizations={courseCustomizations}
+          archivedAssignmentIds={archivedAssignmentIds}
+          showArchived={showArchived}
+          showScores={showScores}
+          gradeConfig={gradeConfig}
+          synergySnapshot={synergySnapshot}
+          synergyCourseMap={synergyCourseMap}
+          onZoomAssignment={(a) => setZoomedAssignment(a)}
+          onOpenSynergySync={onOpenSynergySync}
+          onInspectCourseGrade={onInspectCourseGrade}
+          canvasUrl={canvasUrl}
+        />
+      ) : (
+      <>
       {/* 1. Mobile Phone View: Linear Scrolling Assignment Card Feed (md:hidden) */}
       <div className="md:hidden space-y-3">
         {sortedAssignments.length === 0 ? (
@@ -1346,6 +1423,8 @@ export const AssignmentsTable: React.FC<AssignmentsTableProps> = ({
         </table>
       </div>
       </div>
+      </>
+      )}
 
       {zoomedAssignment && (
         <AssignmentZoomModal 

@@ -16,6 +16,67 @@ export interface StudentVueProfileSummary {
   email?: string;
   school?: string;
   grade?: string;
+  agu?: string;
+}
+
+export interface LinkedStudentVueProfile {
+  confirmedAt: string;
+  districtDomain: string;
+  isParent: boolean;
+  apiServerUrl: string;
+  studentName?: string;
+  permId?: string;
+  school?: string;
+  grade?: string;
+  agu?: string;
+  confidence: 'high' | 'medium' | 'low';
+  matched: boolean;
+}
+
+const STUDENTVUE_LINK_PREFIX = 'velm_studentvue_link_v1_';
+
+export function getLinkedStudentVueProfile(studentId?: string): LinkedStudentVueProfile | null {
+  try {
+    const raw = localStorage.getItem(`${STUDENTVUE_LINK_PREFIX}${studentId || 'default'}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as LinkedStudentVueProfile) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLinkedStudentVueProfile(
+  studentId: string | undefined,
+  link: LinkedStudentVueProfile
+): LinkedStudentVueProfile {
+  const sanitized: LinkedStudentVueProfile = {
+    confirmedAt: link.confirmedAt || new Date().toISOString(),
+    districtDomain: normalizeSynergyDomain(link.districtDomain),
+    isParent: Boolean(link.isParent),
+    apiServerUrl: (typeof link.apiServerUrl === 'string' ? link.apiServerUrl : '').trim().replace(/\/+$/, ''),
+    studentName: link.studentName,
+    permId: link.permId,
+    school: link.school,
+    grade: link.grade,
+    agu: link.agu,
+    confidence: link.confidence,
+    matched: Boolean(link.matched),
+  };
+  try {
+    localStorage.setItem(`${STUDENTVUE_LINK_PREFIX}${studentId || 'default'}`, JSON.stringify(sanitized));
+  } catch (err: any) {
+    logger.warn('[StudentVUE Link] Failed to persist linked StudentVUE profile:', err?.message || String(err));
+  }
+  return sanitized;
+}
+
+export function clearLinkedStudentVueProfile(studentId?: string): void {
+  try {
+    localStorage.removeItem(`${STUDENTVUE_LINK_PREFIX}${studentId || 'default'}`);
+  } catch {
+    // ignore storage errors
+  }
 }
 
 export interface AccountComparisonResult {
@@ -26,6 +87,8 @@ export interface AccountComparisonResult {
   warnings: string[];
   canvasProfile: CanvasProfileSummary;
   studentVueProfile: StudentVueProfileSummary;
+  availableStudents?: StudentVueProfileSummary[];
+  selectedStudentIndex?: number;
   checkedAt: string;
 }
 
@@ -50,8 +113,14 @@ export type VerifyStage =
   | 'student_info'
   | 'unknown';
 
+export interface StudentVueTransientSession {
+  baseUrl: string;
+  bearerToken: string;
+  edupointSession: string;
+}
+
 export type StudentVueVerifyOutcome =
-  | { ok: true; comparison: AccountComparisonResult }
+  | { ok: true; comparison: AccountComparisonResult; transientSession?: StudentVueTransientSession }
   | { ok: false; stage: VerifyStage; error: string };
 
 const DEFAULT_TIMEOUT_MS = 20000;
@@ -95,6 +164,15 @@ export function inferSuggestedSynergyDomain(canvasDomain?: string): string {
   return '';
 }
 
+export function resolveSchoolviewBaseUrl(raw?: string): string {
+  const cleaned = (typeof raw === 'string' ? raw : '').trim().replace(/\/+$/, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://') || cleaned.startsWith('/')) {
+    return cleaned;
+  }
+  return '';
+}
+
 /**
  * Safely convert unknown API/FastAPI/Synergy error payloads into readable strings without throwing or returning "[object Object]".
  */
@@ -120,6 +198,9 @@ export function formatApiErrorDetail(detail: unknown, fallbackStatus?: number): 
     const rec = detail as Record<string, unknown>;
     const candidate = rec.message ?? rec.error ?? rec.detail ?? rec.ErrorMessage;
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    if (Object.keys(rec).length === 0) {
+      return fallbackStatus ? `HTTP ${fallbackStatus} (empty response)` : 'Empty response from server';
+    }
     try {
       return JSON.stringify(detail).slice(0, 300);
     } catch {
@@ -187,6 +268,22 @@ function namesMatch(a?: string, b?: string): boolean {
       }
     }
     if (allPresent) return true;
+
+    // Handle single-letter middle initial matching full middle name symmetrically (e.g. "Jane Marie Doe" vs "Doe, Jane M")
+    const unmatchedA = [...setA].filter((t) => !setB.has(t));
+    const unmatchedB = [...setB].filter((t) => !setA.has(t));
+    const sharedMultiCharCount = [...setA].filter((t) => t.length >= 2 && setB.has(t)).length;
+    if (
+      sharedMultiCharCount >= 2 &&
+      unmatchedA.length <= 1 &&
+      unmatchedB.length <= 1 &&
+      (unmatchedA.length === 0 ||
+        unmatchedB.length === 0 ||
+        (unmatchedA[0].length === 1 && unmatchedB[0].startsWith(unmatchedA[0])) ||
+        (unmatchedB[0].length === 1 && unmatchedA[0].startsWith(unmatchedB[0])))
+    ) {
+      return true;
+    }
   }
 
   return false;
@@ -317,33 +414,15 @@ export function compareStudentProfiles(
   const mismatchReasons: string[] = [];
   const warnings: string[] = [];
 
-  // 1. Compare Names
-  const canvasNames = [canvasProfile?.name, canvasProfile?.shortName, canvasProfile?.sortableName].filter(
-    (n): n is string => typeof n === 'string' && Boolean(n.trim())
-  );
-  const svName = typeof studentVueProfile?.name === 'string' ? studentVueProfile.name : undefined;
-
-  if (svName && canvasNames.length > 0) {
-    const anyNameMatched = canvasNames.some((cn) => namesMatch(cn, svName));
-    if (anyNameMatched) {
-      matchReasons.push(`Name matches ("${svName}")`);
-    } else {
-      mismatchReasons.push(
-        `Name differs: Canvas "${canvasNames[0]}" vs StudentVUE "${svName}"`
-      );
-    }
-  } else {
-    warnings.push('Could not compare names (missing name in one of the profiles).');
-  }
-
-  // 2. Compare Student ID (PermID vs sis_user_id / login_id)
+  // 1. Compare Student ID (PermID vs sis_user_id / login_id) first because district PermID is authoritative
   const svPermId = typeof studentVueProfile?.permId === 'string' ? studentVueProfile.permId.trim() : '';
   const canvasIds = [canvasProfile?.sisUserId, canvasProfile?.loginId]
     .filter((v): v is string => typeof v === 'string' && Boolean(v.trim()))
     .map((v) => v.trim());
 
+  let idMatched = false;
   if (svPermId && canvasIds.length > 0) {
-    const idMatched = canvasIds.some(
+    idMatched = canvasIds.some(
       (cid) =>
         cid.toLowerCase() === svPermId.toLowerCase() ||
         cid.toLowerCase().startsWith(`${svPermId.toLowerCase()}@`)
@@ -357,18 +436,45 @@ export function compareStudentProfiles(
     }
   }
 
+  // 2. Compare Names
+  const canvasNames = [canvasProfile?.name, canvasProfile?.shortName, canvasProfile?.sortableName].filter(
+    (n): n is string => typeof n === 'string' && Boolean(n.trim())
+  );
+  const svName = typeof studentVueProfile?.name === 'string' ? studentVueProfile.name : undefined;
+
+  if (svName && canvasNames.length > 0) {
+    const anyNameMatched = canvasNames.some((cn) => namesMatch(cn, svName));
+    if (anyNameMatched) {
+      matchReasons.push(`Name matches ("${svName}")`);
+    } else if (idMatched) {
+      warnings.push(
+        `Name differs (Canvas "${canvasNames[0]}" vs StudentVUE "${svName}"), but Student ID matched.`
+      );
+    } else {
+      mismatchReasons.push(
+        `Name differs: Canvas "${canvasNames[0]}" vs StudentVUE "${svName}"`
+      );
+    }
+  } else {
+    warnings.push('Could not compare names (missing name in one of the profiles).');
+  }
+
   // 3. Compare Email (if available in both)
   const svEmail = typeof studentVueProfile?.email === 'string' ? studentVueProfile.email.trim().toLowerCase() : '';
   const canvasEmail = typeof canvasProfile?.email === 'string' ? canvasProfile.email.trim().toLowerCase() : '';
   if (svEmail && canvasEmail) {
     if (svEmail === canvasEmail) {
       matchReasons.push(`Email matches (${svEmail})`);
+    } else if (idMatched) {
+      warnings.push(
+        `Email differs (Canvas "${canvasEmail}" vs StudentVUE "${svEmail}"), but Student ID matched.`
+      );
     } else {
       mismatchReasons.push(`Email differs: Canvas "${canvasEmail}" vs StudentVUE "${svEmail}"`);
     }
   }
 
-  const matched = matchReasons.length > 0 && mismatchReasons.length === 0;
+  const matched = idMatched || (matchReasons.length > 0 && mismatchReasons.length === 0);
   const confidence: 'high' | 'medium' | 'low' =
     matchReasons.length >= 2 && mismatchReasons.length === 0
       ? 'high'
@@ -388,6 +494,169 @@ export function compareStudentProfiles(
   };
 }
 
+function toStudentVueProfile(entry: unknown): StudentVueProfileSummary | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const obj = entry as Record<string, unknown>;
+  const profile: StudentVueProfileSummary = {
+    name:
+      unwrapBadgerfish(obj.FormattedName) ||
+      unwrapBadgerfish(obj.NickName) ||
+      unwrapBadgerfish(obj.Name) ||
+      unwrapBadgerfish(obj.StudentName) ||
+      unwrapBadgerfish(obj.ChildName) ||
+      unwrapBadgerfish(obj.name),
+    permId:
+      unwrapBadgerfish(obj.PermID) ||
+      unwrapBadgerfish(obj.permId) ||
+      unwrapBadgerfish(obj.sisNumber) ||
+      unwrapBadgerfish(obj.SISNumber) ||
+      unwrapBadgerfish(obj['@PermID']),
+    email: unwrapBadgerfish(obj.EMail) || unwrapBadgerfish(obj.Email) || unwrapBadgerfish(obj.email),
+    school:
+      unwrapBadgerfish(obj.CurrentSchool) ||
+      unwrapBadgerfish(obj.SchoolName) ||
+      unwrapBadgerfish(obj.schoolName) ||
+      unwrapBadgerfish(obj.school) ||
+      unwrapBadgerfish(obj.OrganizationName),
+    grade: unwrapBadgerfish(obj.Grade) || unwrapBadgerfish(obj.grade),
+    agu: unwrapBadgerfish(obj.AGU) || unwrapBadgerfish(obj.agu),
+  };
+
+  if (!profile.name && !profile.permId && !profile.email && !profile.school && !profile.grade) {
+    return null;
+  }
+  return profile;
+}
+
+function isSameStudentProfile(a: StudentVueProfileSummary, b: StudentVueProfileSummary): boolean {
+  const permA = a.permId?.trim().toLowerCase();
+  const permB = b.permId?.trim().toLowerCase();
+  if (permA && permB) {
+    return permA === permB;
+  }
+  const nameA = normalizeNameTokens(a.name).sort().join(' ');
+  const nameB = normalizeNameTokens(b.name).sort().join(' ');
+  if (nameA && nameB && nameA === nameB) {
+    return true;
+  }
+  return (
+    (a.name || '').trim().toLowerCase() === (b.name || '').trim().toLowerCase() &&
+    (a.email || '').trim().toLowerCase() === (b.email || '').trim().toLowerCase() &&
+    (a.school || '').trim().toLowerCase() === (b.school || '').trim().toLowerCase()
+  );
+}
+
+/**
+ * Extract one or more student profiles from a StudentInfo payload
+ * (supporting multi-student ParentVUE `Students` / `ChildList` arrays as well as single-student SOAP objects).
+ */
+export function extractStudentVueProfiles(rawData: Record<string, unknown>): StudentVueProfileSummary[] {
+  const rawInfoCandidate = rawData?.StudentInfo ?? rawData;
+  const rawInfo = (
+    rawInfoCandidate && typeof rawInfoCandidate === 'object' ? rawInfoCandidate : {}
+  ) as Record<string, unknown>;
+
+  const listCandidates: unknown[] = [];
+
+  if (Array.isArray(rawInfo.Students)) {
+    listCandidates.push(...rawInfo.Students);
+  } else if (rawInfo.Students && typeof rawInfo.Students === 'object') {
+    const nested = (rawInfo.Students as Record<string, unknown>).Student;
+    if (Array.isArray(nested)) {
+      listCandidates.push(...nested);
+    } else if (nested && typeof nested === 'object') {
+      listCandidates.push(nested);
+    }
+  }
+
+  if (rawInfo.ChildList && typeof rawInfo.ChildList === 'object') {
+    const child = (rawInfo.ChildList as Record<string, unknown>).Child;
+    if (Array.isArray(child)) {
+      listCandidates.push(...child);
+    } else if (child && typeof child === 'object') {
+      listCandidates.push(child);
+    }
+  }
+
+  const profiles: StudentVueProfileSummary[] = [];
+  const pushOrMerge = (candidate: StudentVueProfileSummary | null) => {
+    if (!candidate) return;
+    const existingIdx = profiles.findIndex((p) => isSameStudentProfile(p, candidate));
+    if (existingIdx >= 0) {
+      profiles[existingIdx] = {
+        name: profiles[existingIdx].name || candidate.name,
+        permId: profiles[existingIdx].permId || candidate.permId,
+        email: profiles[existingIdx].email || candidate.email,
+        school: profiles[existingIdx].school || candidate.school,
+        grade: profiles[existingIdx].grade || candidate.grade,
+        agu: profiles[existingIdx].agu || candidate.agu,
+      };
+      return;
+    }
+    profiles.push(candidate);
+  };
+
+  for (const item of listCandidates) {
+    pushOrMerge(toStudentVueProfile(item));
+  }
+  pushOrMerge(toStudentVueProfile(rawInfo));
+
+  return profiles;
+}
+
+/**
+ * Score candidate StudentVUE profiles against the active Canvas profile and pick the best match.
+ */
+export function selectBestMatchingStudent(
+  canvasProfile: CanvasProfileSummary,
+  profiles: StudentVueProfileSummary[]
+): { selectedIndex: number; comparison: AccountComparisonResult } {
+  if (!Array.isArray(profiles) || profiles.length === 0) {
+    const fallback = compareStudentProfiles(canvasProfile, {});
+    return {
+      selectedIndex: 0,
+      comparison: {
+        ...fallback,
+        availableStudents: [],
+        selectedStudentIndex: 0,
+      },
+    };
+  }
+
+  let bestIdx = 0;
+  let bestComparison = compareStudentProfiles(canvasProfile, profiles[0]);
+  let bestScore = -Infinity;
+
+  for (let i = 0; i < profiles.length; i += 1) {
+    const cmp = i === 0 ? bestComparison : compareStudentProfiles(canvasProfile, profiles[i]);
+    const tier =
+      cmp.matched && cmp.confidence === 'high'
+        ? 4000
+        : cmp.matched
+        ? 3000
+        : cmp.matchReasons.length > 0
+        ? 2000
+        : 1000;
+    const score =
+      tier + cmp.matchReasons.length * 10 - cmp.mismatchReasons.length * 5 - cmp.warnings.length;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+      bestComparison = cmp;
+    }
+  }
+
+  return {
+    selectedIndex: bestIdx,
+    comparison: {
+      ...bestComparison,
+      availableStudents: profiles,
+      selectedStudentIndex: bestIdx,
+    },
+  };
+}
+
 /**
  * Transiently log into schoolview-api -> StudentVUE, fetch StudentInfo,
  * and compare against the active Canvas account profile.
@@ -403,11 +672,14 @@ export async function verifyStudentVueAccount(
 
   try {
     const baseUrl = (typeof req?.apiServerUrl === 'string' ? req.apiServerUrl : '').trim().replace(/\/+$/, '');
-    if (!baseUrl || (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://'))) {
+    if (
+      !baseUrl ||
+      (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://') && !baseUrl.startsWith('/'))
+    ) {
       return {
         ok: false,
         stage: 'config',
-        error: 'API server URL must start with http:// or https://.',
+        error: 'API server URL must start with http://, https://, or /.',
       };
     }
     const apiUsername = (typeof req?.apiUsername === 'string' ? req.apiUsername : '').trim();
@@ -521,15 +793,19 @@ export async function verifyStudentVueAccount(
     stage = 'student_info';
     let infoRes: Response;
     try {
-      infoRes = await fetchWithTimeout(`${baseUrl}/api/v1/edupoint/student-info`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${bearerToken}`,
-          'X-Edupoint-Session': edupointSession,
+      infoRes = await fetchWithTimeout(
+        `${baseUrl}/api/v1/edupoint/student-info`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bearerToken}`,
+            'X-Edupoint-Session': edupointSession,
+          },
+          body: JSON.stringify({}),
         },
-        body: JSON.stringify({}),
-      });
+        45000
+      );
     } catch (netErr: any) {
       const msg =
         netErr?.name === 'AbortError'
@@ -581,27 +857,25 @@ export async function verifyStudentVueAccount(
       };
     }
 
-    const studentVueProfile: StudentVueProfileSummary = {
-      name:
-        unwrapBadgerfish(rawInfo.FormattedName) ||
-        unwrapBadgerfish(rawInfo.NickName) ||
-        unwrapBadgerfish(rawInfo.Name),
-      permId: unwrapBadgerfish(rawInfo.PermID),
-      email: unwrapBadgerfish(rawInfo.EMail),
-      school: unwrapBadgerfish(rawInfo.CurrentSchool),
-      grade: unwrapBadgerfish(rawInfo.Grade),
-    };
-
-    const comparison = compareStudentProfiles(canvasResult.profile, studentVueProfile);
+    const profiles = extractStudentVueProfiles(rawData);
+    const { selectedIndex, comparison } = selectBestMatchingStudent(canvasResult.profile, profiles);
     logger.info(
-      `[StudentVUE Verify] Comparison complete. Matched=${comparison.matched} (${comparison.confidence})`,
+      `[StudentVUE Verify] Comparison complete. Matched=${comparison.matched} (${comparison.confidence}), student=${selectedIndex + 1}/${Math.max(profiles.length, 1)}`,
       {
         matchReasons: comparison.matchReasons,
         mismatchReasons: comparison.mismatchReasons,
       }
     );
 
-    return { ok: true, comparison };
+    return {
+      ok: true,
+      comparison,
+      transientSession: {
+        baseUrl,
+        bearerToken,
+        edupointSession,
+      },
+    };
   } catch (err: any) {
     const message = err?.message || String(err) || 'Unexpected verification error';
     logger.error(`[StudentVUE Verify] Unhandled error at stage "${stage}"`, message);

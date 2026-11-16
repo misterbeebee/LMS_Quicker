@@ -13,13 +13,24 @@ export type GradeResolutionSource =
   | 'suppressed_zero_unreliable'
   | 'unavailable';
 
+import type { StudentVueCourseGrade } from '../services/studentvueGrades';
+
 export interface EffectiveCourseGrade {
   score: number;
   letter?: string;
   isEstimated: boolean;
+  isOfficial?: boolean;
+  officialSourceLabel?: string;
+  officialPeriodName?: string;
   hasData: boolean;
-  source: 'canvas_enrollment' | 'calculated_unweighted';
+  source: 'studentvue_official' | 'canvas_enrollment' | 'calculated_unweighted';
   gradedCount: number;
+}
+
+export interface EffectiveGradeOptions {
+  nowMs?: number;
+  synergyCourse?: StudentVueCourseGrade | null;
+  reportingPeriodName?: string;
 }
 
 export interface UnweightedCourseAverage {
@@ -430,9 +441,32 @@ export const computeCourseGradingCoverage = (
 
 export const getEffectiveCourseGrade = (
   courseData: CourseData | null | undefined,
-  nowMs: number = Date.now()
+  nowMsOrOptions: number | EffectiveGradeOptions = Date.now()
 ): EffectiveCourseGrade | null => {
   if (!courseData) return null;
+
+  const opts: EffectiveGradeOptions =
+    typeof nowMsOrOptions === 'number' ? { nowMs: nowMsOrOptions } : nowMsOrOptions || {};
+  const nowMs = typeof opts.nowMs === 'number' ? opts.nowMs : Date.now();
+  const synergyCourse = opts.synergyCourse;
+
+  if (
+    synergyCourse &&
+    typeof synergyCourse.scorePercent === 'number' &&
+    Number.isFinite(synergyCourse.scorePercent)
+  ) {
+    return {
+      score: synergyCourse.scorePercent,
+      letter: synergyCourse.letterGrade || undefined,
+      isEstimated: false,
+      isOfficial: true,
+      officialSourceLabel: 'Synergy',
+      officialPeriodName: opts.reportingPeriodName || synergyCourse.markName,
+      hasData: true,
+      source: 'studentvue_official',
+      gradedCount: synergyCourse.assignments.length,
+    };
+  }
 
   const officialScore = isFiniteNumber(courseData.enrollment?.grades?.current_score)
     ? courseData.enrollment!.grades.current_score!
