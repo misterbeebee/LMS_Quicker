@@ -193,7 +193,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
         {/* Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
           <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-[11px] text-indigo-900 leading-relaxed">
-            <strong>Transient only:</strong> Your StudentVUE username and password are never saved on any server or browser storage. They are only used in memory to verify your profile against Canvas.
+            Your StudentVUE username and password are never saved on any server or browser storage.
           </div>
 
           {/* Account Type Toggle */}
