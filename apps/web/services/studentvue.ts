@@ -102,6 +102,7 @@ export interface StudentVueVerifyRequest {
   edupointUsername: string;
   edupointPassword: string;
   isParent: boolean;
+  reuseExistingSession?: boolean;
   canvasDomain: string;
   canvasToken: string;
   useProxy: boolean;
@@ -711,11 +712,14 @@ export async function verifyStudentVueAccount(
     const edupointPassword = typeof req?.edupointPassword === 'string' ? req.edupointPassword : '';
 
     if (localBackend) {
-      if (!districtDomain || !edupointUsername || !edupointPassword) {
+      const reuseSession = Boolean(req?.reuseExistingSession);
+      if (!districtDomain || (!reuseSession && (!edupointUsername || !edupointPassword))) {
         return {
           ok: false,
           stage: 'config',
-          error: 'Synergy endpoint domain, username, and password are required.',
+          error: reuseSession
+            ? 'Synergy endpoint domain is required.'
+            : 'Synergy endpoint domain, username, and password are required.',
         };
       }
       logger.info(`[StudentVUE Verify] Starting local verification (district: ${districtDomain})`);
@@ -738,6 +742,7 @@ export async function verifyStudentVueAccount(
         password: edupointPassword,
         districtDomain,
         isParent: Boolean(req.isParent),
+        ...(reuseSession ? { reuseExistingSession: true } : {}),
       });
       if (isErr(synergyRes)) {
         const errStage: VerifyStage = synergyRes.error.code === 'AUTH_FAILED' ? 'edupoint_session' : 'student_info';
@@ -758,6 +763,7 @@ export async function verifyStudentVueAccount(
         password: edupointPassword,
         districtDomain,
         isParent: Boolean(req.isParent),
+        ...(reuseSession ? { reuseExistingSession: true } : {}),
       });
       return {
         ok: true,

@@ -31,7 +31,7 @@ import {
   StudentVueGradebookSnapshot,
   syncStudentVueGradebook,
 } from '../../services/studentvueGrades';
-import { isLocalRuntime } from '../../services/backend';
+import { isExtensionRuntime, isLocalRuntime } from '../../services/backend';
 
 interface StudentVueGradeSyncModalProps {
   isOpen: boolean;
@@ -65,6 +65,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
 
   const [districtDomain, setDistrictDomain] = useState('');
   const [isParent, setIsParent] = useState(false);
+  const [reuseExistingSession, setReuseExistingSession] = useState(false);
   const [selectedPeriodKey, setSelectedPeriodKey] = useState<string>('');
 
   const [showApiConfig, setShowApiConfig] = useState(false);
@@ -113,6 +114,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
       setEdupointUsername('');
       setEdupointPassword('');
       setShowEdupointPassword(false);
+      setReuseExistingSession(false);
       setApiPassword('');
       setShowApiPassword(false);
       setIsSyncing(false);
@@ -160,6 +162,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
         edupointUsername,
         edupointPassword,
         isParent,
+        reuseExistingSession,
         agu: linkedProfile?.agu || currentSnapshot?.agu,
         permId: linkedProfile?.permId || currentSnapshot?.permId,
         studentName: linkedProfile?.studentName || currentSnapshot?.studentName || studentName,
@@ -362,11 +365,33 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
             </div>
           )}
 
+          {/* Open-tab SSO reuse (Chrome / Firefox extension runtime) */}
+          {isExtensionRuntime() && (
+            <label
+              data-testid="gradesync-reuse-session-toggle"
+              className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={reuseExistingSession}
+                onChange={(e) => setReuseExistingSession(e.target.checked)}
+                className="mt-0.5 rounded border-blue-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>
+                <span className="font-bold block">Reuse open StudentVUE/ParentVUE tab (for SSO districts)</span>
+                <span className="text-[11px] text-blue-800/90">
+                  Sign into StudentVUE in another tab first, then sync official grades without entering a password here.
+                </span>
+              </span>
+            </label>
+          )}
+
           {/* Edupoint Credentials */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${reuseExistingSession ? 'opacity-60' : ''}`}>
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                 {isParent ? 'ParentVUE Username' : 'StudentVUE Username'}
+                {reuseExistingSession && <span className="font-normal text-slate-400"> (optional)</span>}
               </label>
               <div className="relative">
                 <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -376,7 +401,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
                   value={edupointUsername}
                   onChange={(e) => setEdupointUsername(e.target.value)}
                   placeholder="Username"
-                  required
+                  required={!reuseExistingSession}
                   className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-300 focus:outline-hidden focus:border-emerald-500"
                 />
               </div>
@@ -385,6 +410,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                 {isParent ? 'ParentVUE Password' : 'StudentVUE Password'}
+                {reuseExistingSession && <span className="font-normal text-slate-400"> (optional)</span>}
               </label>
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -394,7 +420,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
                   value={edupointPassword}
                   onChange={(e) => setEdupointPassword(e.target.value)}
                   placeholder="••••••••"
-                  required
+                  required={!reuseExistingSession}
                   className="w-full pl-8 pr-8 py-1.5 text-xs rounded-xl border border-slate-300 focus:outline-hidden focus:border-emerald-500"
                 />
                 <button

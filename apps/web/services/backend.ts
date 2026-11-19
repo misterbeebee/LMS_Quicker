@@ -106,6 +106,7 @@ export interface LocalTransientSynergySession {
   readonly districtDomain: string;
   readonly isParent: boolean;
   readonly accountId?: string;
+  readonly reuseExistingSession?: boolean;
 }
 
 const localTransientSessions = new Map<string, LocalTransientSynergySession>();

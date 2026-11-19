@@ -9,7 +9,10 @@ import {
   type LlmProviderConfig,
 } from '@velm/core';
 import {
+  getBackendMeta,
   installLocalBackendFetchBridge,
+  isExtensionRuntime,
+  isMultiStudentSupported,
   loadMockDatastoreJson,
   saveLlmConfig,
   setLocalBackend,
@@ -345,5 +348,101 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
       expect(verifyOutcome.comparison.matched).toBe(true);
       expect(verifyOutcome.comparison.studentVueProfile.name).toBe('Alex Sample');
     }
+  });
+
+  it('detects extension runtime single-student mode (D4) and forwards reuseExistingSession without password', async () => {
+    const extBackend = createLocalBackend({
+      platform: 'extension',
+      version: '1.8.0-ext',
+      transport: makeMockTransport((req) => {
+        if (req.url.includes('/api/v1/users/self/profile')) {
+          return jsonResponse(req.url, {
+            id: 42,
+            name: 'Jane Doe',
+            primary_email: 'jane@school.edu',
+            sis_user_id: '123456',
+          });
+        }
+        return jsonResponse(req.url, { error: 'unexpected' }, 404);
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+
+    const getStudentInfoSpy = vi.spyOn(extBackend.synergy, 'getStudentInfo').mockResolvedValue({
+      ok: true,
+      data: {
+        StudentInfo: {
+          FormattedName: 'Jane Doe',
+          PermID: '123456',
+          EMail: 'jane@school.edu',
+        },
+      },
+    });
+    const getGradebookSpy = vi.spyOn(extBackend.synergy, 'getGradebook').mockResolvedValue({
+      ok: true,
+      data: {
+        Gradebook: {
+          ReportingPeriod: { '@GradePeriod': 'Quarter 2' },
+          Courses: {
+            Course: {
+              '@Period': '1',
+              '@Title': 'Algebra II',
+              Marks: {
+                Mark: {
+                  '@MarkName': 'Quarter 2',
+                  '@CalculatedScoreString': 'A',
+                  '@CalculatedScoreRaw': '95.5',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    installLocalBackendFetchBridge(extBackend);
+    const meta = await getBackendMeta();
+    expect(meta?.platform).toBe('extension');
+    expect(isExtensionRuntime()).toBe(true);
+    expect(isMultiStudentSupported()).toBe(false);
+
+    const verifyOutcome = await verifyStudentVueAccount({
+      canvasDomain: 'canvas.example.edu',
+      canvasToken: 'tok_123',
+      useProxy: true,
+      apiServerUrl: '',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'sis.example.edu',
+      edupointUsername: '',
+      edupointPassword: '',
+      isParent: false,
+      reuseExistingSession: true,
+    });
+    expect(verifyOutcome.ok).toBe(true);
+    expect(getStudentInfoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        districtDomain: 'sis.example.edu',
+        reuseExistingSession: true,
+      })
+    );
+
+    const gradeOutcome = await syncStudentVueGradebook({
+      apiServerUrl: '',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'sis.example.edu',
+      edupointUsername: '',
+      edupointPassword: '',
+      isParent: false,
+      reuseExistingSession: true,
+    });
+    expect(gradeOutcome.ok).toBe(true);
+    expect(getGradebookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        districtDomain: 'sis.example.edu',
+        reuseExistingSession: true,
+      })
+    );
   });
 });

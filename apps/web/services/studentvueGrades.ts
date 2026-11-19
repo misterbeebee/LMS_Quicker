@@ -86,6 +86,7 @@ export interface StudentVueGradeSyncRequest {
   edupointUsername: string;
   edupointPassword: string;
   isParent: boolean;
+  reuseExistingSession?: boolean;
   agu?: string;
   permId?: string;
   studentName?: string;
@@ -581,6 +582,7 @@ export async function fetchSynergyGradebookWithSession(params: {
       districtDomain: localSession.districtDomain,
       isParent: localSession.isParent,
       ...(localSession.accountId ? { accountId: localSession.accountId } : {}),
+      ...(localSession.reuseExistingSession ? { reuseExistingSession: true } : {}),
       ...(params.reportPeriod !== undefined ? { reportPeriod: params.reportPeriod } : {}),
       ...(params.reportPeriodGu ? { reportPeriodGu: params.reportPeriodGu } : {}),
       ...(params.agu ? { agu: params.agu } : {}),
@@ -664,10 +666,11 @@ export async function syncStudentVueGradebook(
   const districtDomain = normalizeSynergyDomain(req.districtDomain);
 
   if (localBackend) {
+    const reuseSession = Boolean(req.reuseExistingSession);
     if (!districtDomain) {
       return { ok: false, stage: 'config', error: 'Synergy district domain is required.' };
     }
-    if (!req.edupointUsername.trim() || !req.edupointPassword) {
+    if (!reuseSession && (!req.edupointUsername.trim() || !req.edupointPassword)) {
       return { ok: false, stage: 'config', error: 'StudentVUE / ParentVUE username and password are required.' };
     }
     const res = await localBackend.synergy.getGradebook({
@@ -675,6 +678,7 @@ export async function syncStudentVueGradebook(
       password: req.edupointPassword,
       districtDomain,
       isParent: Boolean(req.isParent),
+      ...(reuseSession ? { reuseExistingSession: true } : {}),
       ...(req.reportPeriod !== undefined ? { reportPeriod: req.reportPeriod } : {}),
       ...(req.reportPeriodGu ? { reportPeriodGu: req.reportPeriodGu } : {}),
       ...(req.agu ? { agu: req.agu } : {}),

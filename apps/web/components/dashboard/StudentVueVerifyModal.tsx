@@ -38,7 +38,7 @@ import {
   StudentVueGradebookSnapshot,
 } from '../../services/studentvueGrades';
 import { logger } from '../../services/logger';
-import { isLocalRuntime } from '../../services/backend';
+import { isExtensionRuntime, isLocalRuntime } from '../../services/backend';
 
 interface StudentVueVerifyModalProps {
   isOpen: boolean;
@@ -73,6 +73,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
   const [isEndpointDropdownOpen, setIsEndpointDropdownOpen] = useState(false);
   const [endpointShowAll, setEndpointShowAll] = useState(false);
   const [isParent, setIsParent] = useState(false);
+  const [reuseExistingSession, setReuseExistingSession] = useState(false);
 
   const [showApiConfig, setShowApiConfig] = useState(false);
   const [apiServerUrl, setApiServerUrl] = useState(DEFAULT_API_URL);
@@ -132,6 +133,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
       setEdupointUsername('');
       setEdupointPassword('');
       setShowEdupointPassword(false);
+      setReuseExistingSession(false);
       setApiPassword('');
       setShowApiPassword(false);
       setOutcome(null);
@@ -180,6 +182,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
         edupointUsername,
         edupointPassword,
         isParent,
+        reuseExistingSession,
         canvasDomain,
         canvasToken,
         useProxy,
@@ -414,11 +417,33 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             </div>
           </div>
 
+          {/* Open-tab SSO reuse (Chrome / Firefox extension runtime) */}
+          {isExtensionRuntime() && (
+            <label
+              data-testid="verify-reuse-session-toggle"
+              className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-900 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={reuseExistingSession}
+                onChange={(e) => setReuseExistingSession(e.target.checked)}
+                className="mt-0.5 rounded border-blue-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>
+                <span className="font-bold block">Reuse open StudentVUE/ParentVUE tab (for SSO districts)</span>
+                <span className="text-[11px] text-blue-800/90">
+                  Sign into StudentVUE in another tab first, then verify without entering a password here.
+                </span>
+              </span>
+            </label>
+          )}
+
           {/* Edupoint Username & Password */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${reuseExistingSession ? 'opacity-60' : ''}`}>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 {isParent ? 'ParentVUE' : 'StudentVUE'} Username
+                {reuseExistingSession && <span className="font-normal text-slate-400"> (optional)</span>}
               </label>
               <div className="relative">
                 <User className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
@@ -429,13 +454,14 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                   value={edupointUsername}
                   onChange={(e) => setEdupointUsername(e.target.value)}
                   className="w-full text-xs pl-8 pr-3 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  required
+                  required={!reuseExistingSession}
                 />
               </div>
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 {isParent ? 'ParentVUE' : 'StudentVUE'} Password
+                {reuseExistingSession && <span className="font-normal text-slate-400"> (optional)</span>}
               </label>
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
@@ -446,7 +472,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
                   value={edupointPassword}
                   onChange={(e) => setEdupointPassword(e.target.value)}
                   className="w-full text-xs pl-8 pr-8 py-2 rounded-xl border border-slate-300 focus:outline-hidden focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  required
+                  required={!reuseExistingSession}
                 />
                 <button
                   type="button"

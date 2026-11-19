@@ -28,6 +28,7 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { StudentVueVerifyModal } from './StudentVueVerifyModal';
 import { getLinkedStudentVueProfile, LinkedStudentVueProfile } from '../../services/studentvue';
 import { StudentVueGradebookSnapshot } from '../../services/studentvueGrades';
+import { isMultiStudentSupported } from '../../services/backend';
 
 interface StudentSwitcherProps {
   currentStudentId?: string;
@@ -471,14 +472,23 @@ export const StudentSwitcher: React.FC<StudentSwitcherProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={handleOpenAddModal}
-              className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50/70 hover:bg-blue-100/70 rounded-xl transition cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4" />
-              Add Another Student
-            </button>
+            {isMultiStudentSupported() ? (
+              <button
+                type="button"
+                onClick={handleOpenAddModal}
+                className="w-full flex items-center justify-center gap-2 py-2 px-3 text-xs font-bold text-blue-600 hover:text-blue-700 bg-blue-50/70 hover:bg-blue-100/70 rounded-xl transition cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4" />
+                Add Another Student
+              </button>
+            ) : (
+              <div
+                data-testid="extension-single-student-hint"
+                className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-snug"
+              >
+                In the browser extension, use a separate browser profile to track another student.
+              </div>
+            )}
           </div>
         </div>
       )}
