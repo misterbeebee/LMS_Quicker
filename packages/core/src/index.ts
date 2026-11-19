@@ -22,3 +22,12 @@ export {
 export * from './synergy/index.js';
 export * from './llm/index.js';
 export * from './canvas/index.js';
+export {
+  createLocalBackend,
+  type LocalBackendOptions,
+  type RawHttpProxyRequest,
+  type RawHttpProxyResponse,
+  type SynergyCredentialsInput,
+  type VelmBackend,
+  type VelmBackendMeta,
+} from './backend.js';
