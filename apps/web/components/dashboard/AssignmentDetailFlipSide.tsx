@@ -18,8 +18,9 @@ import {
   MapPin,
   RefreshCw
 } from 'lucide-react';
-import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, linkifyHtml, formatPoints } from '../../utils/dashboard-helpers';
+import { formatSubmissionType, cleanAssignmentDescription, isAssignmentSubmitted, isAssignmentPastDue, formatPoints } from '../../utils/dashboard-helpers';
 import { getCalendarEventWebUrl } from '../../utils/canvasUrls';
+import { sanitizeHtml as sanitizeSharedHtml } from '../../utils/sanitizeHtml';
 
 interface AssignmentDetailFlipSideProps {
   assignment: CanvasAssignment;
@@ -70,51 +71,12 @@ export const AssignmentDetailFlipSide: React.FC<AssignmentDetailFlipSideProps> =
   }, [assignment.id, assignment.course_id, canvasUrl, apiKey, useProxy]);
 
   // Clean and sanitize HTML for safe display
-  const sanitizeHtml = (html?: string) => {
-    if (!html) return '<p class="text-slate-400 italic">No instructions or description provided.</p>';
-    
-    // Simple sanitization: remove scripts and malicious elements
-    let clean = html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-      .replace(/on\w+="[^"]*"/g, '')
-      .replace(/on\w+='[^']*'/g, '');
-
-    // Transform all anchor tags: style valid links as inline blue links, and unwrap empty/hash links
-    clean = clean.replace(/<a\b([^>]*)>(.*?)<\/a>/gis, (_match, attrs, content) => {
-      const hrefMatch = attrs.match(/href=["']([^"']*)["']/i);
-      let href = hrefMatch ? hrefMatch[1].trim() : '';
-
-      // If href is empty or anchor hash only, render as inline span without making it a dead link
-      if (!href || href === '#' || href === 'javascript:void(0)' || href === 'javascript:;') {
-        return `<span class="inline">${content}</span>`;
-      }
-
-      // Fix typos like hhttps:// -> https://
-      if (/^hhttps?:\/\//i.test(href)) {
-        href = href.replace(/^h/i, '');
-      } else if (!href.startsWith('http://') && !href.startsWith('https://') && !href.startsWith('mailto:') && !href.startsWith('/')) {
-        href = `https://${href}`;
-      }
-
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 underline font-medium break-words cursor-pointer inline">${content}</a>`;
+  const sanitizeHtml = (html?: string) =>
+    sanitizeSharedHtml(html, {
+      emptyFallbackHtml: '<p class="text-slate-400 italic">No instructions or description provided.</p>',
+      styleAnchors: true,
+      linkifyPlainUrls: true,
     });
-
-    // Handle any standalone or unclosed <a ...> tags
-    clean = clean.replace(/<a\b([^>]*)>/gi, (match, attrs) => {
-      if (attrs.includes('text-blue-600')) return match;
-      const hrefMatch = attrs.match(/href=["']([^"']*)["']/i);
-      let href = hrefMatch ? hrefMatch[1].trim() : '';
-      if (!href || href === '#') return '<span class="inline">';
-      if (/^hhttps?:\/\//i.test(href)) href = href.replace(/^h/i, '');
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 underline font-medium break-words cursor-pointer inline">`;
-    });
-
-    // Linkify plain text URLs outside existing <a> tags
-    clean = linkifyHtml(clean);
-
-    return clean;
-  };
 
   const hasRubric = !!(detail?.rubric && detail.rubric.length > 0);
   const hasComments = !!(detail?.submission?.submission_comments && detail.submission.submission_comments.length > 0);

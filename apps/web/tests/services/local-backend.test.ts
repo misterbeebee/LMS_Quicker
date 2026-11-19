@@ -22,6 +22,8 @@ import { syncStudentVueGradebook } from '../../services/studentvueGrades';
 import { analyzeWorkload } from '../../services/gemini';
 import { getFileFromCanvas, saveFileToCanvas } from '../../services/canvas';
 import { translateTextWithFreeApi } from '../../services/translation';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
+import { saveStudent } from '../../services/students';
 
 function makeHeaders(map: Record<string, string>): HttpHeaders {
   const lower = new Map<string, string>();
@@ -516,5 +518,75 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
     expect(proxyRequests.some((u) => u.startsWith('https://api.mymemory.translated.net/get?'))).toBe(
       true
     );
+  });
+
+  it('sanitizes XSS vectors via DOMParser sanitizeHtml and forwards studentIdentifiersToRedact to LlmRouter', async () => {
+    const dirty = `
+      <div>
+        <h3>Study Plan</h3>
+        <img src=x onerror=alert(1)>
+        <svg onload="alert(2)"></svg>
+        <script>window.evil = true;</script>
+        <a href="javascript:alert(3)">Bad Link</a>
+        <a href="https://canvas.example.edu/courses/101">Valid Course</a>
+      </div>
+    `;
+    const clean = sanitizeHtml(dirty, { styleAnchors: true });
+    expect(clean).not.toContain('onerror');
+    expect(clean).not.toContain('onload');
+    expect(clean).not.toContain('<script');
+    expect(clean).not.toContain('<svg');
+    expect(clean).not.toContain('javascript:');
+    expect(clean).toContain('target="_blank"');
+    expect(clean).toContain('rel="noopener noreferrer"');
+    expect(clean).toContain('https://canvas.example.edu/courses/101');
+
+    // Verify analyzeWorkload passes active student name in studentIdentifiersToRedact
+    saveStudent({ name: 'Maya Lin', domain: 'canvas.example.edu', apiKey: 'tok_maya' });
+    let capturedPrompt = '';
+    const backend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport(async (req) => {
+        if (req.url.includes('/v1/chat/completions') && req.body) {
+          capturedPrompt = String(req.body);
+          return jsonResponse(req.url, {
+            choices: [{ message: { content: '<p>Redacted OK</p>' } }],
+          });
+        }
+        return jsonResponse(req.url, { error: 'unexpected' }, 404);
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+    setLocalBackend(backend);
+
+    const cloudConfig: LlmProviderConfig = {
+      id: 'openai-cloud',
+      kind: 'openai-compatible',
+      label: 'OpenAI Cloud',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+      privacy: 'paid-no-training',
+      auth: { type: 'none' },
+    };
+    saveLlmConfig(cloudConfig);
+
+    await analyzeWorkload(
+      [
+        {
+          id: 77,
+          name: 'Essay for Maya Lin',
+          course_id: 101,
+          due_at: '2026-02-01T00:00:00Z',
+          points_possible: 20,
+          html_url: 'https://canvas.example.edu/courses/101/assignments/77',
+        } as never,
+      ],
+      []
+    );
+
+    expect(capturedPrompt).not.toContain('Maya');
+    expect(capturedPrompt).toContain('[REDACTED]');
+    expect(capturedPrompt).toContain('Canvas Link:');
   });
 });

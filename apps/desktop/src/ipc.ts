@@ -15,16 +15,39 @@ export interface IpcMainLike {
   handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
 }
 
+function isDisallowedProxyHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '0.0.0.0' ||
+    host === '::1' ||
+    host === '0:0:0:0:0:0:0:1'
+  ) {
+    return true;
+  }
+  if (host.startsWith('127.') || host.startsWith('169.254.')) {
+    return true;
+  }
+  return false;
+}
+
 const HttpUrlSchema = z.string().url().refine(
   (value) => {
     try {
-      const protocol = new URL(value).protocol;
-      return protocol === 'https:' || protocol === 'http:';
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'https:') {
+        return false;
+      }
+      return !isDisallowedProxyHost(parsed.hostname);
     } catch {
       return false;
     }
   },
-  { message: 'Only http:// and https:// URLs are permitted.' }
+  {
+    message:
+      'Only remote https:// URLs are permitted via httpRequest (loopback and link-local hosts are blocked).',
+  }
 );
 
 const RawHttpProxyRequestSchema = z.object({

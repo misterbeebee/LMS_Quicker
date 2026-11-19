@@ -26,7 +26,9 @@ export function sanitizePromptForCloud(
   ).sort((a, b) => b.length - a.length);
 
   for (const id of cleaned) {
-    const re = new RegExp(escapeRegExp(id), 'gi');
+    const useWordBoundary = /^[A-Za-z0-9_]+(?:\s+[A-Za-z0-9_]+)*$/.test(id);
+    const pattern = useWordBoundary ? `\\b${escapeRegExp(id)}\\b` : escapeRegExp(id);
+    const re = new RegExp(pattern, 'gi');
     const matches = result.match(re);
     if (matches && matches.length > 0) {
       redactedCount += matches.length;

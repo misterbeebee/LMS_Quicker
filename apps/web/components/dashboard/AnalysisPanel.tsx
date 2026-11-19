@@ -22,6 +22,7 @@ import { TACTICAL_PROMPTS, TacticalPromptOption } from '../../services/gemini';
 import type { LlmProviderConfig } from '@velm/core';
 import { getSavedLlmConfig, isLocalRuntime } from '../../services/backend';
 import { AiProviderSettingsModal } from './AiProviderSettingsModal';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 interface AnalysisPanelProps {
   analysis: string | null;
@@ -164,7 +165,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
             <div className="flex items-center gap-1.5 flex-wrap">
               <h3 className="text-sm font-bold text-indigo-950">AI Academic Advisor</h3>
               <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200">
-                Gemini
+                {localMode ? (localLlmConfig?.label || 'Local / BYO AI') : 'Gemini'}
               </span>
               
               {/* Help (?) Button replaces repetitive explanatory text */}
@@ -490,7 +491,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
 
           <div 
             className="prose prose-sm prose-indigo max-w-none text-slate-800 leading-relaxed [&_a]:text-indigo-600 [&_a]:font-semibold [&_a]:underline [&_a:hover]:text-indigo-800 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-1 [&_h3]:text-indigo-950 [&_h3]:font-bold [&_h3]:mt-3 [&_h3]:mb-1 [&_h4]:text-slate-900 [&_h4]:font-semibold"
-            dangerouslySetInnerHTML={{ __html: analysis }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(analysis) }}
           />
         </div>
       )}

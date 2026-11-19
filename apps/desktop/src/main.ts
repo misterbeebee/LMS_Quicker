@@ -56,6 +56,26 @@ function createMainWindow(): BrowserWindow {
   });
 
   const entry = resolveRendererEntry();
+
+  // Block top-level renderer navigation to external origins; open safe http(s) links in the OS browser instead.
+  win.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (entry.type === 'url') {
+      try {
+        if (new URL(navigationUrl).origin === new URL(entry.value).origin) {
+          return;
+        }
+      } catch {
+        // fall through to preventDefault
+      }
+    } else if (navigationUrl.startsWith('file://')) {
+      return;
+    }
+    event.preventDefault();
+    if (isSafeExternalUrl(navigationUrl)) {
+      void shell.openExternal(navigationUrl);
+    }
+  });
+
   if (entry.type === 'url') {
     void win.loadURL(entry.value);
   } else {

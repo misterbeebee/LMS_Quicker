@@ -3,6 +3,8 @@ import { logger } from "./logger";
 import { isAssignmentSubmitted } from "../utils/dashboard-helpers";
 import { isErr } from "@velm/core";
 import { getLocalBackend, getLlmMinimizeStudentData, getSavedLlmConfig } from "./backend";
+import { getActiveStudent } from "./students";
+import { getLinkedStudentVueProfile } from "./studentvue";
 
 export interface TacticalPromptOption {
   id: string;
@@ -205,10 +207,27 @@ export const analyzeWorkload = async (
         <p>Velm runs locally on your device. Open <strong>AI Provider Settings</strong> to connect a local model (Ollama, LM Studio) or your own API key (Gemini, OpenAI, Anthropic, Groq, OpenRouter).</p>
       </div>`;
     }
+    const activeStudent = getActiveStudent();
+    const linkedSvue = activeStudent ? getLinkedStudentVueProfile(activeStudent.id) : null;
+    const rawIdentifiers = [
+      activeStudent?.name,
+      linkedSvue?.studentName,
+      linkedSvue?.permId,
+      linkedSvue?.edupointUsername,
+    ];
+    const studentIdentifiersToRedact = Array.from(
+      new Set(
+        rawIdentifiers
+          .flatMap((val) => (val ? [val.trim(), ...val.trim().split(/\s+/)] : []))
+          .filter((token) => token.length >= 3)
+      )
+    );
+
     logger.info(`[AI Analyst] Requesting local analysis via ${llmConfig.label} (${llmConfig.model})...`);
     const res = await localBackend.llm.generate(llmConfig, {
       prompt,
       minimizeStudentData: getLlmMinimizeStudentData(),
+      studentIdentifiersToRedact,
     });
     if (isErr(res)) {
       logger.error('[AI Analyst] Provider returned error:', res.error.message);

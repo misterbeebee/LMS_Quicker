@@ -133,6 +133,21 @@ describe('@velm/desktop adapters and IPC', () => {
       })
     ).rejects.toThrow();
 
+    // Reject loopback SSRF attempts via httpRequest (local LLM uses dedicated llm:* IPC channels)
+    await expect(
+      handlers.get(VELM_IPC_CHANNELS.httpRequest)?.({}, {
+        url: 'http://127.0.0.1:11434/api/tags',
+        method: 'GET',
+      })
+    ).rejects.toThrow();
+
+    await expect(
+      handlers.get(VELM_IPC_CHANNELS.httpRequest)?.({}, {
+        url: 'https://localhost:8443/internal',
+        method: 'GET',
+      })
+    ).rejects.toThrow();
+
     // Allow https:// request
     const httpRes = await handlers.get(VELM_IPC_CHANNELS.httpRequest)?.({}, {
       url: 'https://canvas.example.edu/api/v1/courses',
