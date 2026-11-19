@@ -1,0 +1,149 @@
+name: Velm Unsigned Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag name for draft release (e.g. v1.8.0-rc1)"
+        required: true
+        default: "v1.8.0-rc1"
+
+permissions:
+  contents: write
+
+jobs:
+  build-desktop:
+    name: Desktop (${{ matrix.os_label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_label: macOS
+            runner: macos-latest
+            builder_flag: --mac
+          - os_label: Windows
+            runner: windows-latest
+            builder_flag: --win
+          - os_label: Linux
+            runner: ubuntu-latest
+            builder_flag: --linux
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build renderer and Electron main/preload
+        run: |
+          pnpm --filter @velm/shared build
+          pnpm --filter @velm/core build
+          pnpm --filter @velm/web build
+          pnpm --filter @velm/desktop build
+
+      - name: Package unsigned Electron installer (${{ matrix.os_label }})
+        working-directory: apps/desktop
+        run: pnpm dlx electron-builder@26 ${{ matrix.builder_flag }} --config electron-builder.yml
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os_label }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+          if-no-files-found: error
+
+  build-extensions:
+    name: Browser Extensions (Chrome & Firefox MV3)
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Chrome & Firefox MV3 extensions
+        run: |
+          pnpm --filter @velm/shared build
+          pnpm --filter @velm/core build
+          pnpm --filter @velm/web build
+          pnpm --filter @velm/extension build
+          pnpm --filter @velm/extension build:firefox
+
+      - name: Zip extension bundles
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./apps/extension/package.json').version")"
+          mkdir -p extension-zips
+          (cd apps/extension/dist && zip -r "../../../extension-zips/velm-extension-chrome-${VERSION}.zip" .)
+          (cd apps/extension/dist-firefox && zip -r "../../../extension-zips/velm-extension-firefox-${VERSION}.zip" .)
+          ls -lh extension-zips
+
+      - name: Upload extension artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-extensions
+          path: extension-zips/*.zip
+          if-no-files-found: error
+
+  publish-draft-release:
+    name: Create Draft Release & SHA256SUMS
+    runs-on: ubuntu-latest
+    needs: [build-desktop, build-extensions]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-staging
+          merge-multiple: true
+
+      - name: Include GETTING_STARTED.md and generate SHA256SUMS.txt
+        shell: bash
+        run: |
+          cp docs/GETTING_STARTED.md release-staging/GETTING_STARTED.md
+          cd release-staging
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Publish draft GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}"
+          gh release create "$TAG" release-staging/* \
+            --draft \
+            --title "Velm $TAG (Unsigned Local-First Build)" \
+            --notes "### Unsigned Local-First Release
+
+          **Security notice:** These desktop installers and unpacked browser extension zips are **unsigned**. Your OS (macOS Gatekeeper / Windows SmartScreen) will display an unrecognized-developer warning on first launch.
+
+          1. Verify your download against \`SHA256SUMS.txt\`.
+          2. Follow \`GETTING_STARTED.md\` (attached below) for step-by-step macOS, Windows, Linux, Chrome, and Firefox install instructions.
+          3. All Canvas LMS, StudentVUE, and AI requests run directly from your device with zero Velm cloud servers."
