@@ -77,8 +77,14 @@ async function main() {
   }
   await fs.writeFile(indexHtmlPath, injected, 'utf-8');
 
-  // Copy target manifest as manifest.json and GETTING_STARTED.md
+  // Copy target manifest as manifest.json, icons directory, and GETTING_STARTED.md
   await fs.copyFile(path.join(extRoot, manifestFile), path.join(outDir, 'manifest.json'));
+  const iconsSrc = path.join(extRoot, 'icons');
+  try {
+    await copyDir(iconsSrc, path.join(outDir, 'icons'));
+  } catch {
+    // optional if icons directory is absent
+  }
   const guidePath = path.resolve(extRoot, '..', '..', 'docs', 'GETTING_STARTED.md');
   try {
     await fs.copyFile(guidePath, path.join(outDir, 'GETTING_STARTED.md'));

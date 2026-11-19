@@ -67,7 +67,8 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
 chmod +x Velm-*-linux-x64.AppImage
 ./Velm-*-linux-x64.AppImage
 ```
-*(Ubuntu 22.04+ / Debian 12+ may require `libfuse2` to run AppImages: `sudo apt install libfuse2`.)*
+- *(Ubuntu 22.04+ / Debian 12+)* AppImages require FUSE 2: `sudo apt install libfuse2t64` (Ubuntu 24.04+) or `sudo apt install libfuse2` (Ubuntu 22.04 / Debian 12).
+- *(Ubuntu 23.10 / 24.04+)* Ubuntu restricts unprivileged user namespaces for AppImages by default. If the AppImage exits with a `SUID sandbox helper binary` error, either install the `.deb` package below (which includes an AppArmor profile / setuid chrome-sandbox) or launch the AppImage with `./Velm-*-linux-x64.AppImage --no-sandbox`.
 
 **Debian / Ubuntu (`.deb`):**
 ```bash
