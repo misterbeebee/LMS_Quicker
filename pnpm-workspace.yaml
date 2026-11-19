@@ -4,5 +4,6 @@ packages:
 
 allowBuilds:
   esbuild: true
+  electron: true
   "@google/genai": false
   protobufjs: false

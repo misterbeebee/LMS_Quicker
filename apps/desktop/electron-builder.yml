@@ -1,0 +1,51 @@
+appId: org.velm.desktop
+productName: Velm
+copyright: Copyright © 2026 Velm Contributors
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/main.cjs
+  - dist/main.cjs.map
+  - dist/preload.cjs
+  - dist/preload.cjs.map
+  - from: ../web/dist
+    to: renderer
+  - from: ../../docs/GETTING_STARTED.md
+    to: GETTING_STARTED.md
+
+# Unsigned builds for now (D6, D8). See docs/GETTING_STARTED.md for per-OS install instructions.
+mac:
+  category: public.app-category.education
+  identity: null
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  artifactName: "Velm-${version}-mac-${arch}.${ext}"
+
+win:
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "Velm-${version}-win-${arch}-setup.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+
+linux:
+  category: Education
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: "Velm-${version}-linux-${arch}.${ext}"

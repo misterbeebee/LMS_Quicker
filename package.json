@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "pnpm --filter @velm/web dev",
     "dev:web": "pnpm --filter @velm/web dev",
+    "start:desktop": "pnpm --filter @velm/desktop start",
     "build": "pnpm -r build",
+    "build:desktop": "pnpm --filter @velm/web build && pnpm --filter @velm/desktop build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r lint",
     "test:unit": "pnpm -r test:unit",
