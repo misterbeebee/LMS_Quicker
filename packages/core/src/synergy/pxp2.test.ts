@@ -470,11 +470,15 @@ describe('PXP2 web fallback parity with schoolview-api/tests/test_api.py', () =>
     });
   });
 
-  it('supports reuseExistingSession mode (Chrome extension open-tab / SSO reuse)', async () => {
+  it('supports reuseExistingSession mode (Chrome extension open-tab / SSO reuse) and bypasses SOAP entirely', async () => {
+    let hitSoap = false;
     let hitLoginForm = false;
     const transport: HttpTransport = {
       async request(req) {
-        if (req.url.includes('PXPCommunication.asmx')) return makeResp(wrapDeprecatedSoap(), req.url);
+        if (req.url.includes('PXPCommunication.asmx')) {
+          hitSoap = true;
+          return makeResp('', req.url, 500);
+        }
         if (req.url.includes('Home_PXP2.aspx')) {
           return makeResp('<html><body>Welcome SSO Student</body></html>', req.url);
         }
@@ -507,6 +511,7 @@ describe('PXP2 web fallback parity with schoolview-api/tests/test_api.py', () =>
     });
 
     const res = await service.getStudentInfo();
+    expect(hitSoap).toBe(false);
     expect(hitLoginForm).toBe(false);
     expect(res.ok).toBe(true);
     if (!res.ok) return;

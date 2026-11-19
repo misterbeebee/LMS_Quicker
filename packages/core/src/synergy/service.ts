@@ -44,8 +44,10 @@ function toFailure(error: unknown): SynergyFailure {
 export class SynergyService {
   readonly soap: SynergySoapClient;
   readonly pxp2: Pxp2WebClient;
+  private readonly reuseExistingSession: boolean;
 
   constructor(options: SynergyServiceOptions) {
+    this.reuseExistingSession = Boolean(options.reuseExistingSession);
     this.soap = new SynergySoapClient({
       username: options.username,
       password: options.password,
@@ -73,6 +75,10 @@ export class SynergyService {
     pxp2Fallback?: () => Promise<Record<string, unknown>>
   ): Promise<Result<Record<string, unknown>, SynergyFailure>> {
     try {
+      if (this.reuseExistingSession && pxp2Fallback) {
+        const directPxp2 = await pxp2Fallback();
+        return ok(directPxp2);
+      }
       const raw = await soapCall();
       const errMsg = extractRtError(raw);
       if (errMsg) {

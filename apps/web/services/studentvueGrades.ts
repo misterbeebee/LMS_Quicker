@@ -86,6 +86,7 @@ export interface StudentVueGradeSyncRequest {
   edupointUsername: string;
   edupointPassword: string;
   isParent: boolean;
+  accountId?: string;
   reuseExistingSession?: boolean;
   agu?: string;
   permId?: string;
@@ -678,6 +679,7 @@ export async function syncStudentVueGradebook(
       password: req.edupointPassword,
       districtDomain,
       isParent: Boolean(req.isParent),
+      ...(req.accountId ? { accountId: req.accountId } : {}),
       ...(reuseSession ? { reuseExistingSession: true } : {}),
       ...(req.reportPeriod !== undefined ? { reportPeriod: req.reportPeriod } : {}),
       ...(req.reportPeriodGu ? { reportPeriodGu: req.reportPeriodGu } : {}),

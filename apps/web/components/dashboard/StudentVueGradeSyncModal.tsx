@@ -162,6 +162,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
         edupointUsername,
         edupointPassword,
         isParent,
+        accountId: studentId,
         reuseExistingSession,
         agu: linkedProfile?.agu || currentSnapshot?.agu,
         permId: linkedProfile?.permId || currentSnapshot?.permId,

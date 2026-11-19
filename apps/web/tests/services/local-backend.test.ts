@@ -417,12 +417,14 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
       edupointUsername: '',
       edupointPassword: '',
       isParent: false,
+      accountId: 'student_maya_1',
       reuseExistingSession: true,
     });
     expect(verifyOutcome.ok).toBe(true);
     expect(getStudentInfoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         districtDomain: 'sis.example.edu',
+        accountId: 'student_maya_1',
         reuseExistingSession: true,
       })
     );
@@ -435,12 +437,14 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
       edupointUsername: '',
       edupointPassword: '',
       isParent: false,
+      accountId: 'student_maya_1',
       reuseExistingSession: true,
     });
     expect(gradeOutcome.ok).toBe(true);
     expect(getGradebookSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         districtDomain: 'sis.example.edu',
+        accountId: 'student_maya_1',
         reuseExistingSession: true,
       })
     );

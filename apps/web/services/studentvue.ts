@@ -102,6 +102,7 @@ export interface StudentVueVerifyRequest {
   edupointUsername: string;
   edupointPassword: string;
   isParent: boolean;
+  accountId?: string;
   reuseExistingSession?: boolean;
   canvasDomain: string;
   canvasToken: string;
@@ -742,6 +743,7 @@ export async function verifyStudentVueAccount(
         password: edupointPassword,
         districtDomain,
         isParent: Boolean(req.isParent),
+        ...(req.accountId ? { accountId: req.accountId } : {}),
         ...(reuseSession ? { reuseExistingSession: true } : {}),
       });
       if (isErr(synergyRes)) {
@@ -763,6 +765,7 @@ export async function verifyStudentVueAccount(
         password: edupointPassword,
         districtDomain,
         isParent: Boolean(req.isParent),
+        ...(req.accountId ? { accountId: req.accountId } : {}),
         ...(reuseSession ? { reuseExistingSession: true } : {}),
       });
       return {

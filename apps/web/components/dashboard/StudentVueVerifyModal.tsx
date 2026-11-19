@@ -182,6 +182,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
         edupointUsername,
         edupointPassword,
         isParent,
+        accountId: studentId,
         reuseExistingSession,
         canvasDomain,
         canvasToken,
