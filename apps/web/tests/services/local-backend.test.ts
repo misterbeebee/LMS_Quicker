@@ -10,6 +10,7 @@ import {
 } from '@velm/core';
 import {
   installLocalBackendFetchBridge,
+  loadMockDatastoreJson,
   saveLlmConfig,
   setLocalBackend,
 } from '../../services/backend';
@@ -232,5 +233,117 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
 
     const configuredHtml = await analyzeWorkload([], []);
     expect(configuredHtml).toContain('Local AI Summary OK');
+  });
+
+  it('mounts an offline mock datastore via loadMockDatastoreJson for Canvas and StudentVUE', async () => {
+    const fixture = {
+      version: 1,
+      recordedAt: '2026-01-15T12:00:00.000Z',
+      sanitized: true,
+      canvas: {
+        domain: 'mock.instructure.com',
+        self: { id: 99, name: 'Alex Sample' },
+        profile: {
+          id: 99,
+          name: 'Alex Sample',
+          primary_email: 'alex@mock.edu',
+          sis_user_id: '55501',
+        },
+        courses: [
+          {
+            id: 101,
+            name: 'AP Biology',
+            course_code: 'BIO-AP',
+          },
+        ],
+        courseNicknames: [],
+        todo: [],
+        upcomingEvents: [],
+        announcements: [],
+        courseDetailsById: {},
+        enrollmentsByCourseId: {},
+        assignmentsByCourseId: {
+          '101': [
+            {
+              id: 1001,
+              name: 'Cell Respiration Lab',
+              course_id: 101,
+              points_possible: 50,
+            },
+          ],
+        },
+        assignmentGroupsByCourseId: {},
+        modulesByCourseId: {},
+      },
+      synergy: {
+        domain: 'sis.mock.edu',
+        isParent: false,
+        data: {
+          student_info: {
+            StudentInfo: {
+              FormattedName: 'Alex Sample',
+              PermID: '55501',
+              EMail: 'alex@mock.edu',
+              CurrentSchool: 'Mock High',
+              Grade: '11',
+            },
+          },
+          gradebook: {
+            Gradebook: {
+              ReportingPeriod: { '@GradePeriod': 'Semester 1' },
+              Courses: {
+                Course: [
+                  {
+                    '@Period': '2',
+                    '@Title': 'AP Biology',
+                    '@Staff': 'Dr. Lee',
+                    Marks: {
+                      Mark: {
+                        '@MarkName': 'Semester 1',
+                        '@CalculatedScoreString': 'A-',
+                        '@CalculatedScoreRaw': '91.4',
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        errors: {},
+      },
+      scrapeErrors: {},
+    };
+
+    const loaded = loadMockDatastoreJson(JSON.stringify(fixture));
+    expect(loaded.canvasDomain).toBe('mock.instructure.com');
+    expect(loaded.synergyDomain).toBe('sis.mock.edu');
+    expect(loaded.courseCount).toBe(1);
+
+    const coursesRes = await window.fetch(
+      `/api/proxy?url=${encodeURIComponent('https://mock.instructure.com/api/v1/courses')}`
+    );
+    expect(coursesRes.status).toBe(200);
+    const courses = (await coursesRes.json()) as Array<{ id: number; name: string }>;
+    expect(courses).toHaveLength(1);
+    expect(courses[0].name).toBe('AP Biology');
+
+    const verifyOutcome = await verifyStudentVueAccount({
+      canvasDomain: 'mock.instructure.com',
+      canvasToken: 'mock-fixture-token',
+      useProxy: true,
+      apiServerUrl: '',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'sis.mock.edu',
+      edupointUsername: 'alex',
+      edupointPassword: 'pw',
+      isParent: false,
+    });
+    expect(verifyOutcome.ok).toBe(true);
+    if (verifyOutcome.ok) {
+      expect(verifyOutcome.comparison.matched).toBe(true);
+      expect(verifyOutcome.comparison.studentVueProfile.name).toBe('Alex Sample');
+    }
   });
 });

@@ -1,9 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
-import { Loader2, ExternalLink, AlertTriangle, Lock, Unlock, Trash2, KeyRound, RefreshCw, ArrowLeft, Archive, Clipboard, Check, DownloadCloud, Bug, ChevronDown, ChevronUp, Users, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader2, ExternalLink, AlertTriangle, Lock, Unlock, Trash2, KeyRound, RefreshCw, ArrowLeft, Archive, Clipboard, Check, DownloadCloud, Bug, ChevronDown, ChevronUp, Users, ChevronRight, Upload } from 'lucide-react';
 import { encryptData, decryptData, StoredCredentials } from '../services/crypto';
 import { logger } from '../services/logger';
 import { getSavedStudents, StudentProfile, setActiveStudentId, getActiveStudent } from '../services/students';
+import { loadMockDatastoreJson } from '../services/backend';
 
 interface LoginProps {
   onLogin: (domain: string, token: string, isDemo: boolean, useProxy: boolean, batchSize: number, studentId?: string, staySignedIn?: boolean) => void;
@@ -60,6 +61,22 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
   const [showTokenConfirmation, setShowTokenConfirmation] = useState(false);
   const [submittedToken, setSubmittedToken] = useState<string | null>(null);
   const [confirmClearSaved, setConfirmClearSaved] = useState(false);
+  const mockFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleMockFixtureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setLocalError(null);
+    try {
+      const text = await file.text();
+      const loaded = loadMockDatastoreJson(text);
+      logger.info(`[Mock Fixture] Loaded ${file.name} (${loaded.courseCount} courses, domain=${loaded.canvasDomain})`);
+      onLogin(loaded.canvasDomain, 'mock-fixture-token', false, true, 10);
+    } catch (err: any) {
+      setLocalError(`Invalid mock fixture JSON: ${err?.message || 'parse error'}`);
+    }
+  };
 
   useEffect(() => {
     loadFromStorage();
@@ -802,7 +819,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
           </label>
         )}
 
-        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-center gap-3 text-[11px] text-slate-500">
+        <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-center gap-2.5 flex-wrap text-[11px] text-slate-500">
           <button
             type="button"
             onClick={() => onLogin('', '', true, false, 2)}
@@ -811,6 +828,23 @@ export const Login: React.FC<LoginProps> = ({ onLogin, onDebug, loading, error }
             title="Try with demo data"
           >
             Demo
+          </button>
+          <span className="text-slate-300">•</span>
+          <input
+            ref={mockFileInputRef}
+            type="file"
+            accept=".json,application/json"
+            onChange={handleMockFixtureUpload}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => mockFileInputRef.current?.click()}
+            disabled={loading}
+            className="hover:text-emerald-700 text-emerald-700 flex items-center gap-1 transition cursor-pointer font-semibold"
+            title="Load a velm-mock-store.v1.json snapshot offline"
+          >
+            <Upload className="w-3 h-3" /> Mock JSON
           </button>
           <span className="text-slate-300">•</span>
           <button

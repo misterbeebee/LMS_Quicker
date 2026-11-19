@@ -1,4 +1,10 @@
-import type { LlmProviderConfig, VelmBackend } from '@velm/core';
+import {
+  createMockDatastoreBackend,
+  VelmMockDatastoreV1Schema,
+  type LlmProviderConfig,
+  type VelmBackend,
+  type VelmBackendMeta,
+} from '@velm/core';
 
 declare global {
   interface Window {
@@ -10,6 +16,7 @@ const LLM_CONFIG_STORAGE_KEY = 'velm_llm_provider_config_v1';
 const LLM_MINIMIZE_DATA_KEY = 'velm_llm_minimize_student_data_v1';
 
 let overrideBackend: VelmBackend | null | undefined;
+let cachedBackendMeta: VelmBackendMeta | null = null;
 let fetchBridgeInstalled = false;
 
 /**
@@ -31,9 +38,15 @@ export function getLocalBackend(): VelmBackend | null {
  */
 export function setLocalBackend(backend: VelmBackend | null): void {
   overrideBackend = backend;
+  cachedBackendMeta = null;
   if (typeof window !== 'undefined') {
     if (backend) {
       window.__VELM_BACKEND__ = backend;
+      void backend.getMeta().then((meta) => {
+        if (getLocalBackend() === backend) {
+          cachedBackendMeta = meta;
+        }
+      });
     } else {
       delete window.__VELM_BACKEND__;
     }
@@ -42,6 +55,49 @@ export function setLocalBackend(backend: VelmBackend | null): void {
 
 export function isLocalRuntime(): boolean {
   return getLocalBackend() !== null;
+}
+
+export function getCachedBackendMeta(): VelmBackendMeta | null {
+  return cachedBackendMeta;
+}
+
+export async function getBackendMeta(): Promise<VelmBackendMeta | null> {
+  const backend = getLocalBackend();
+  if (!backend) return null;
+  if (cachedBackendMeta) return cachedBackendMeta;
+  const meta = await backend.getMeta();
+  cachedBackendMeta = meta;
+  return meta;
+}
+
+export function isExtensionRuntime(): boolean {
+  return cachedBackendMeta?.platform === 'extension';
+}
+
+export function isMultiStudentSupported(): boolean {
+  if (!isLocalRuntime()) return true;
+  if (!cachedBackendMeta) return true;
+  return cachedBackendMeta.multiStudentSupported;
+}
+
+/**
+ * Parse a VelmMockDatastoreV1 JSON snapshot, mount it as the active offline VelmBackend,
+ * and install the local fetch bridge so Canvas, StudentVUE, and AI all run offline.
+ */
+export function loadMockDatastoreJson(rawJsonText: string): {
+  canvasDomain: string;
+  synergyDomain: string | null;
+  courseCount: number;
+} {
+  const parsedJson = JSON.parse(rawJsonText) as unknown;
+  const store = VelmMockDatastoreV1Schema.parse(parsedJson);
+  const backend = createMockDatastoreBackend(store, { platform: 'desktop', version: '1.8.0-mock' });
+  installLocalBackendFetchBridge(backend);
+  return {
+    canvasDomain: store.canvas?.domain ?? 'mock.instructure.com',
+    synergyDomain: store.synergy?.domain ?? null,
+    courseCount: store.canvas?.courses.length ?? 0,
+  };
 }
 
 export interface LocalTransientSynergySession {
