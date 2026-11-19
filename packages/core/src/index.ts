@@ -21,3 +21,4 @@ export {
 
 export * from './synergy/index.js';
 export * from './llm/index.js';
+export * from './canvas/index.js';
