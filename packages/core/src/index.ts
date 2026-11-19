@@ -18,3 +18,5 @@ export {
   type Logger,
   type SecretStore,
 } from './ports.js';
+
+export * from './synergy/index.js';
