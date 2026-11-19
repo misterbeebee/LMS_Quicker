@@ -17,6 +17,7 @@ release
 .env
 .env.*
 !.env.example
+velm-mock-store*.json
 
 # Editor directories and files
 .vscode/*
