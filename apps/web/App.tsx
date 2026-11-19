@@ -11,6 +11,7 @@ import { getActiveStudent, getActiveStudentId, ensureProfileForLogin, setActiveS
 import { sanitizeCanvasDomain, sanitizeCanvasToken } from './utils/canvasUrls';
 import { Loader2, AlertTriangle, Key, School, LogOut, Trash2, RefreshCw, X } from 'lucide-react';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { LocalFirstRunModal } from './components/LocalFirstRunModal';
 
 const AUTO_LOGIN_KEY = 'canvas_session_auto_v1';
 const AUTO_LOGIN_PREF_KEY = 'velm_auto_login_enabled';
@@ -479,6 +480,8 @@ const App: React.FC = () => {
             onBack={exitDebug}
         />
       )}
+
+      <LocalFirstRunModal />
     </>
   );
 };
