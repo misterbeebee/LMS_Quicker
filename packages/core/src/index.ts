@@ -20,3 +20,4 @@ export {
 } from './ports.js';
 
 export * from './synergy/index.js';
+export * from './llm/index.js';
