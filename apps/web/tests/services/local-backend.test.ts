@@ -1,0 +1,236 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  createLocalBackend,
+  createMemorySecretStore,
+  type HttpHeaders,
+  type HttpRequest,
+  type HttpResponse,
+  type HttpTransport,
+  type LlmProviderConfig,
+} from '@velm/core';
+import {
+  installLocalBackendFetchBridge,
+  saveLlmConfig,
+  setLocalBackend,
+} from '../../services/backend';
+import { checkSchoolviewAuthRequired, verifyStudentVueAccount } from '../../services/studentvue';
+import { syncStudentVueGradebook } from '../../services/studentvueGrades';
+import { analyzeWorkload } from '../../services/gemini';
+
+function makeHeaders(map: Record<string, string>): HttpHeaders {
+  const lower = new Map<string, string>();
+  for (const [k, v] of Object.entries(map)) {
+    lower.set(k.toLowerCase(), v);
+  }
+  return {
+    get: (name: string) => lower.get(name.toLowerCase()) ?? null,
+    forEach: (cb) => {
+      lower.forEach((v, k) => cb(v, k));
+    },
+  };
+}
+
+function makeMockTransport(
+  handler: (req: HttpRequest) => HttpResponse | Promise<HttpResponse>
+): HttpTransport {
+  return {
+    request: async (req) => handler(req),
+  };
+}
+
+function jsonResponse(url: string, body: unknown, status = 200): HttpResponse {
+  const text = JSON.stringify(body);
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    url,
+    headers: makeHeaders({ 'content-type': 'application/json' }),
+    text: async () => text,
+    bytes: async () => new TextEncoder().encode(text),
+  };
+}
+
+function xmlResponse(url: string, xml: string, status = 200): HttpResponse {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    url,
+    headers: makeHeaders({ 'content-type': 'text/xml; charset=utf-8' }),
+    text: async () => xml,
+    bytes: async () => new TextEncoder().encode(xml),
+  };
+}
+
+const SOAP_STUDENT_INFO_XML = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ProcessWebServiceRequestResponse xmlns="http://edupoint.com/webservices/">
+      <ProcessWebServiceRequestResult>&lt;StudentInfo&gt;&lt;FormattedName&gt;Jane Doe&lt;/FormattedName&gt;&lt;PermID&gt;123456&lt;/PermID&gt;&lt;EMail&gt;jane@school.edu&lt;/EMail&gt;&lt;CurrentSchool&gt;Lincoln High&lt;/CurrentSchool&gt;&lt;Grade&gt;10&lt;/Grade&gt;&lt;/StudentInfo&gt;</ProcessWebServiceRequestResult>
+    </ProcessWebServiceRequestResponse>
+  </soap:Body>
+</soap:Envelope>`;
+
+const SOAP_GRADEBOOK_XML = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ProcessWebServiceRequestResponse xmlns="http://edupoint.com/webservices/">
+      <ProcessWebServiceRequestResult>&lt;Gradebook&gt;&lt;ReportingPeriod GradePeriod="Quarter 2" StartDate="11/01/2025" EndDate="01/15/2026" /&gt;&lt;Courses&gt;&lt;Course Period="1" Title="Algebra II" Staff="Mr. Smith"&gt;&lt;Marks&gt;&lt;Mark MarkName="Quarter 2" CalculatedScoreString="A" CalculatedScoreRaw="95.5" /&gt;&lt;/Marks&gt;&lt;/Course&gt;&lt;/Courses&gt;&lt;/Gradebook&gt;</ProcessWebServiceRequestResult>
+    </ProcessWebServiceRequestResponse>
+  </soap:Body>
+</soap:Envelope>`;
+
+afterEach(() => {
+  setLocalBackend(null);
+  saveLlmConfig(null);
+  vi.restoreAllMocks();
+});
+
+describe('Local VelmBackend UI bridge (M2.2)', () => {
+  it('intercepts /api/health and /api/proxy via installLocalBackendFetchBridge', async () => {
+    const requests: HttpRequest[] = [];
+    const backend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport((req) => {
+        requests.push(req);
+        return jsonResponse(req.url, { id: 42, name: 'Jane Doe' });
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+
+    installLocalBackendFetchBridge(backend);
+
+    const healthRes = await window.fetch('/api/health');
+    expect(healthRes.status).toBe(200);
+    const healthJson = await healthRes.json();
+    expect(healthJson.status).toBe('ok');
+    expect(healthJson.platform).toBe('desktop');
+
+    const proxyRes = await window.fetch(
+      `/api/proxy?url=${encodeURIComponent('https://canvas.example.edu/api/v1/users/self/profile')}`,
+      { headers: { Authorization: 'Bearer tok_123' } }
+    );
+    expect(proxyRes.status).toBe(200);
+    const profile = await proxyRes.json();
+    expect(profile.name).toBe('Jane Doe');
+    expect(requests.length).toBe(1);
+    expect(requests[0].url).toBe('https://canvas.example.edu/api/v1/users/self/profile');
+    expect(requests[0].headers?.['Authorization'] ?? requests[0].headers?.['authorization']).toBe(
+      'Bearer tok_123'
+    );
+  });
+
+  it('skips schoolview middleware auth and verifies StudentVUE identity locally', async () => {
+    const backend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport((req) => {
+        if (req.url.includes('/api/v1/users/self/profile')) {
+          return jsonResponse(req.url, {
+            id: 42,
+            name: 'Jane Doe',
+            primary_email: 'jane@school.edu',
+            sis_user_id: '123456',
+          });
+        }
+        if (req.url.includes('PXPCommunication.asmx')) {
+          return xmlResponse(req.url, SOAP_STUDENT_INFO_XML);
+        }
+        return jsonResponse(req.url, { error: 'unexpected' }, 404);
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+
+    installLocalBackendFetchBridge(backend);
+
+    expect(await checkSchoolviewAuthRequired()).toBe(false);
+
+    const outcome = await verifyStudentVueAccount({
+      canvasDomain: 'canvas.example.edu',
+      canvasToken: 'tok_123',
+      useProxy: true,
+      apiServerUrl: '',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'sis.example.edu',
+      edupointUsername: 'jdoe',
+      edupointPassword: 'secret',
+      isParent: false,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.comparison.matched).toBe(true);
+      expect(outcome.comparison.studentVueProfile.name).toBe('Jane Doe');
+      expect(outcome.transientSession.baseUrl).toBe('local://synergy');
+    }
+  });
+
+  it('syncs StudentVUE gradebook locally without middleware server', async () => {
+    const backend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport((req) => {
+        if (req.url.includes('PXPCommunication.asmx')) {
+          return xmlResponse(req.url, SOAP_GRADEBOOK_XML);
+        }
+        return jsonResponse(req.url, { error: 'unexpected' }, 404);
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+
+    setLocalBackend(backend);
+
+    const outcome = await syncStudentVueGradebook({
+      apiServerUrl: '',
+      apiUsername: '',
+      apiPassword: '',
+      districtDomain: 'sis.example.edu',
+      edupointUsername: 'jdoe',
+      edupointPassword: 'secret',
+      isParent: false,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.snapshot.courses.length).toBe(1);
+      expect(outcome.snapshot.courses[0].title).toBe('Algebra II');
+      expect(outcome.snapshot.courses[0].scorePercent).toBe(95.5);
+    }
+  });
+
+  it('routes analyzeWorkload through local LlmRouter when configured and prompts when unconfigured', async () => {
+    const backend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport((req) => {
+        if (req.url.includes('/v1/chat/completions')) {
+          return jsonResponse(req.url, {
+            choices: [{ message: { content: '<div>Local AI Summary OK</div>' } }],
+          });
+        }
+        return jsonResponse(req.url, { error: 'unexpected' }, 404);
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+
+    setLocalBackend(backend);
+
+    const unconfiguredHtml = await analyzeWorkload([], []);
+    expect(unconfiguredHtml).toContain('No AI provider configured yet');
+
+    const config: LlmProviderConfig = {
+      id: 'ollama-local',
+      kind: 'openai-compatible',
+      label: 'Ollama (Local)',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'llama3.2',
+      privacy: 'local',
+      auth: { type: 'none' },
+    };
+    saveLlmConfig(config);
+
+    const configuredHtml = await analyzeWorkload([], []);
+    expect(configuredHtml).toContain('Local AI Summary OK');
+  });
+});

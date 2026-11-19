@@ -1,4 +1,6 @@
 import { logger } from './logger';
+import { isErr } from '@velm/core';
+import { getLocalBackend, registerLocalSynergySession } from './backend';
 
 export interface CanvasProfileSummary {
   id?: number;
@@ -192,6 +194,7 @@ export function resolveDefaultSchoolviewApiUrl(): string {
  * Returns true by default if unreachable or the field is absent.
  */
 export async function checkSchoolviewAuthRequired(rawApiServerUrl?: string): Promise<boolean> {
+  if (getLocalBackend()) return false;
   const baseUrl = resolveSchoolviewBaseUrl(rawApiServerUrl);
   if (!baseUrl) return true;
   try {
@@ -702,6 +705,71 @@ export async function verifyStudentVueAccount(
   let stage: VerifyStage = 'config';
 
   try {
+    const localBackend = getLocalBackend();
+    const districtDomain = normalizeSynergyDomain(req?.districtDomain);
+    const edupointUsername = (typeof req?.edupointUsername === 'string' ? req.edupointUsername : '').trim();
+    const edupointPassword = typeof req?.edupointPassword === 'string' ? req.edupointPassword : '';
+
+    if (localBackend) {
+      if (!districtDomain || !edupointUsername || !edupointPassword) {
+        return {
+          ok: false,
+          stage: 'config',
+          error: 'Synergy endpoint domain, username, and password are required.',
+        };
+      }
+      logger.info(`[StudentVUE Verify] Starting local verification (district: ${districtDomain})`);
+
+      stage = 'canvas_profile';
+      const canvasResult = await fetchCanvasProfileForVerification(
+        req.canvasDomain,
+        req.canvasToken,
+        req.useProxy
+      );
+      if (!canvasResult.ok) {
+        const errMsg = 'error' in canvasResult ? canvasResult.error : 'Canvas profile fetch failed.';
+        logger.warn('[StudentVUE Verify] Canvas profile fetch failed', errMsg);
+        return { ok: false, stage: 'canvas_profile', error: errMsg };
+      }
+
+      stage = 'student_info';
+      const synergyRes = await localBackend.synergy.getStudentInfo({
+        username: edupointUsername,
+        password: edupointPassword,
+        districtDomain,
+        isParent: Boolean(req.isParent),
+      });
+      if (isErr(synergyRes)) {
+        const errStage: VerifyStage = synergyRes.error.code === 'AUTH_FAILED' ? 'edupoint_session' : 'student_info';
+        return {
+          ok: false,
+          stage: errStage,
+          error: synergyRes.error.message,
+        };
+      }
+
+      const profiles = extractStudentVueProfiles(synergyRes.data);
+      const { selectedIndex, comparison } = selectBestMatchingStudent(canvasResult.profile, profiles);
+      logger.info(
+        `[StudentVUE Verify] Local comparison complete. Matched=${comparison.matched} (${comparison.confidence}), student=${selectedIndex + 1}/${Math.max(profiles.length, 1)}`
+      );
+      const localToken = registerLocalSynergySession({
+        username: edupointUsername,
+        password: edupointPassword,
+        districtDomain,
+        isParent: Boolean(req.isParent),
+      });
+      return {
+        ok: true,
+        comparison,
+        transientSession: {
+          baseUrl: 'local://synergy',
+          bearerToken: 'local',
+          edupointSession: localToken,
+        },
+      };
+    }
+
     const baseUrl = (typeof req?.apiServerUrl === 'string' ? req.apiServerUrl : '').trim().replace(/\/+$/, '');
     if (
       !baseUrl ||
@@ -726,9 +794,6 @@ export async function verifyStudentVueAccount(
       }
     }
 
-    const districtDomain = normalizeSynergyDomain(req?.districtDomain);
-    const edupointUsername = (typeof req?.edupointUsername === 'string' ? req.edupointUsername : '').trim();
-    const edupointPassword = typeof req?.edupointPassword === 'string' ? req.edupointPassword : '';
     if (!districtDomain || !edupointUsername || !edupointPassword) {
       return {
         ok: false,

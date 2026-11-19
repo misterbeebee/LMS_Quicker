@@ -1,4 +1,4 @@
-import { err, ok, type Result } from '@velm/shared';
+import { err, isErr, isOk, ok, type Result } from '@velm/shared';
 import type { HttpTransport, SecretStore } from '../ports.js';
 import { LLM_PROVIDER_PRESETS } from './presets.js';
 import { sanitizeGeminiModel, sanitizePromptForCloud } from './sanitize.js';
@@ -146,7 +146,7 @@ export class LlmRouter {
     }
 
     const secretRes = await this.resolveSecret(config);
-    if (!secretRes.ok) return secretRes;
+    if (isErr(secretRes)) return secretRes;
 
     try {
       if (config.kind === 'openai-compatible') {
@@ -285,7 +285,7 @@ export class LlmRouter {
     }
 
     const secretRes = await this.resolveSecret(config);
-    if (!secretRes.ok) return secretRes;
+    if (isErr(secretRes)) return secretRes;
 
     const primaryModel =
       config.kind === 'gemini'
@@ -311,7 +311,7 @@ export class LlmRouter {
         req.system,
         req.signal
       );
-      if (attempt.ok) {
+      if (isOk(attempt)) {
         return ok({
           text: attempt.data,
           modelUsed: model,

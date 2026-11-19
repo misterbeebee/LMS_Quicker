@@ -1,5 +1,7 @@
 import { CourseData } from '../types';
 import { logger } from './logger';
+import { isErr } from '@velm/core';
+import { getLocalBackend, resolveLocalSynergySession } from './backend';
 import {
   checkSchoolviewAuthRequired,
   formatApiErrorDetail,
@@ -567,6 +569,40 @@ export async function fetchSynergyGradebookWithSession(params: {
   reportPeriod?: number;
   reportPeriodGu?: string;
 }): Promise<{ ok: true; snapshot: StudentVueGradebookSnapshot } | { ok: false; error: string }> {
+  const localBackend = getLocalBackend();
+  if (localBackend) {
+    const localSession = resolveLocalSynergySession(params.edupointSession);
+    if (!localSession) {
+      return { ok: false, error: 'Local StudentVUE session expired. Please re-enter credentials.' };
+    }
+    const res = await localBackend.synergy.getGradebook({
+      username: localSession.username,
+      password: localSession.password,
+      districtDomain: localSession.districtDomain,
+      isParent: localSession.isParent,
+      ...(localSession.accountId ? { accountId: localSession.accountId } : {}),
+      ...(params.reportPeriod !== undefined ? { reportPeriod: params.reportPeriod } : {}),
+      ...(params.reportPeriodGu ? { reportPeriodGu: params.reportPeriodGu } : {}),
+      ...(params.agu ? { agu: params.agu } : {}),
+      ...(params.permId ? { permId: params.permId } : {}),
+      ...(params.studentName ? { studentName: params.studentName } : {}),
+    });
+    if (isErr(res)) {
+      return { ok: false, error: res.error.message };
+    }
+    const snapshot = parseSynergyGradebook(res.data, {
+      districtDomain: params.districtDomain,
+      isParent: params.isParent,
+      studentName: params.studentName,
+      permId: params.permId,
+      agu: params.agu,
+    });
+    logger.info(
+      `[StudentVUE Grades] Locally synced ${snapshot.courses.length} course(s) (${snapshot.reportingPeriodName || 'Current'})`
+    );
+    return { ok: true, snapshot };
+  }
+
   const baseUrl = resolveSchoolviewBaseUrl(params.baseUrl);
   let res: Response;
   try {
@@ -624,8 +660,45 @@ export async function fetchSynergyGradebookWithSession(params: {
 export async function syncStudentVueGradebook(
   req: StudentVueGradeSyncRequest
 ): Promise<StudentVueGradeSyncOutcome> {
-  const baseUrl = resolveSchoolviewBaseUrl(req.apiServerUrl);
+  const localBackend = getLocalBackend();
   const districtDomain = normalizeSynergyDomain(req.districtDomain);
+
+  if (localBackend) {
+    if (!districtDomain) {
+      return { ok: false, stage: 'config', error: 'Synergy district domain is required.' };
+    }
+    if (!req.edupointUsername.trim() || !req.edupointPassword) {
+      return { ok: false, stage: 'config', error: 'StudentVUE / ParentVUE username and password are required.' };
+    }
+    const res = await localBackend.synergy.getGradebook({
+      username: req.edupointUsername.trim(),
+      password: req.edupointPassword,
+      districtDomain,
+      isParent: Boolean(req.isParent),
+      ...(req.reportPeriod !== undefined ? { reportPeriod: req.reportPeriod } : {}),
+      ...(req.reportPeriodGu ? { reportPeriodGu: req.reportPeriodGu } : {}),
+      ...(req.agu ? { agu: req.agu } : {}),
+      ...(req.permId ? { permId: req.permId } : {}),
+      ...(req.studentName ? { studentName: req.studentName } : {}),
+    });
+    if (isErr(res)) {
+      return {
+        ok: false,
+        stage: res.error.code === 'AUTH_FAILED' ? 'edupoint_session' : 'gradebook',
+        error: res.error.message,
+      };
+    }
+    const snapshot = parseSynergyGradebook(res.data, {
+      districtDomain,
+      isParent: req.isParent,
+      studentName: req.studentName,
+      permId: req.permId,
+      agu: req.agu,
+    });
+    return { ok: true, snapshot };
+  }
+
+  const baseUrl = resolveSchoolviewBaseUrl(req.apiServerUrl);
 
   if (!baseUrl) {
     return { ok: false, stage: 'config', error: 'StudentVUE API Server URL is required.' };

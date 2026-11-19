@@ -22,6 +22,7 @@ export {
 export * from './synergy/index.js';
 export * from './llm/index.js';
 export * from './canvas/index.js';
+export { err, isErr, isOk, ok, type Result } from '@velm/shared';
 export {
   createLocalBackend,
   type LocalBackendOptions,

@@ -1,4 +1,4 @@
-import { err, ok, type Result } from '@velm/shared';
+import { err, isErr, isOk, ok, type Result } from '@velm/shared';
 import type { CookieScopeId, HttpTransport } from '../ports.js';
 import {
   SynergyAuthError,
@@ -156,7 +156,7 @@ export class SynergyService {
 
     // Fail fast on student_info so invalid credentials abort immediately
     const infoRes = await this.getStudentInfo();
-    if (!infoRes.ok) {
+    if (isErr(infoRes)) {
       return infoRes;
     }
     data['student_info'] = infoRes.data;
@@ -180,7 +180,7 @@ export class SynergyService {
 
     for (const [name, fn] of tasks) {
       const res = await fn();
-      if (res.ok) {
+      if (isOk(res)) {
         data[name] = res.data;
       } else if (res.error.code === 'AUTH_FAILED') {
         return err(res.error);

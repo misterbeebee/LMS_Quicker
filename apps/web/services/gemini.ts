@@ -1,6 +1,8 @@
 import { CourseData, CanvasAssignment } from "../types";
 import { logger } from "./logger";
 import { isAssignmentSubmitted } from "../utils/dashboard-helpers";
+import { isErr } from "@velm/core";
+import { getLocalBackend, getLlmMinimizeStudentData, getSavedLlmConfig } from "./backend";
 
 export interface TacticalPromptOption {
   id: string;
@@ -193,6 +195,31 @@ export const analyzeWorkload = async (
     - Do not use markdown backticks or \`\`\`html blocks.
     - Return ONLY the clean HTML string.
   `;
+
+  const localBackend = getLocalBackend();
+  if (localBackend) {
+    const llmConfig = getSavedLlmConfig();
+    if (!llmConfig) {
+      return `<div class="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-md text-sm">
+        <p class="font-semibold mb-1">No AI provider configured yet</p>
+        <p>Velm runs locally on your device. Open <strong>AI Provider Settings</strong> to connect a local model (Ollama, LM Studio) or your own API key (Gemini, OpenAI, Anthropic, Groq, OpenRouter).</p>
+      </div>`;
+    }
+    logger.info(`[AI Analyst] Requesting local analysis via ${llmConfig.label} (${llmConfig.model})...`);
+    const res = await localBackend.llm.generate(llmConfig, {
+      prompt,
+      minimizeStudentData: getLlmMinimizeStudentData(),
+    });
+    if (isErr(res)) {
+      logger.error('[AI Analyst] Provider returned error:', res.error.message);
+      return `<div class="p-3 bg-red-50 border border-red-200 text-red-800 rounded-md text-sm">
+        <p class="font-semibold mb-1">Failed to generate AI analysis (${llmConfig.label}):</p>
+        <p>${res.error.message}</p>
+      </div>`;
+    }
+    logger.info(`[AI Analyst] Generated report using ${res.data.providerId}/${res.data.modelUsed}`);
+    return res.data.text || 'No analysis generated.';
+  }
 
   logger.info(`[Gemini Analyst] Requesting analysis using model ${targetModel}...`);
 

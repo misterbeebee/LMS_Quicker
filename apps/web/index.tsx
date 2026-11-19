@@ -2,6 +2,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
+import { getLocalBackend, installLocalBackendFetchBridge } from './services/backend';
+
+const localBackend = getLocalBackend();
+if (localBackend) {
+  installLocalBackendFetchBridge(localBackend);
+}
 
 // Gracefully prevent unhandled WebSocket/HMR rejection in iframe and container environments
 window.addEventListener('unhandledrejection', (event) => {

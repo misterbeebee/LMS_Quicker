@@ -1,4 +1,4 @@
-import { err, ok, type Result } from '@velm/shared';
+import { err, isErr, ok, type Result } from '@velm/shared';
 import type { CancelSignal, CookieScopeId, HttpHeaders, HttpTransport } from '../ports.js';
 
 export type CanvasErrorCode =
@@ -195,7 +195,7 @@ export class CanvasHttpClient {
         currentUrl,
         options
       );
-      if (!pageRes.ok) {
+      if (isErr(pageRes)) {
         return pageRes;
       }
       if (Array.isArray(pageRes.data.data)) {
