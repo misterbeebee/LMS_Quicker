@@ -6,7 +6,15 @@ import * as esbuild from 'esbuild';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const extRoot = path.resolve(__dirname, '..');
 const webDist = path.resolve(extRoot, '..', 'web', 'dist');
-const outDir = path.join(extRoot, 'dist');
+const targetArg = process.argv.find((arg) => arg.startsWith('--target='));
+const target = targetArg ? targetArg.slice('--target='.length) : 'chrome';
+if (target !== 'chrome' && target !== 'firefox') {
+  throw new Error(`Unsupported extension target "${target}". Expected "chrome" or "firefox".`);
+}
+
+const outDir = path.join(extRoot, target === 'firefox' ? 'dist-firefox' : 'dist');
+const manifestFile = target === 'firefox' ? 'manifest.firefox.json' : 'manifest.json';
+const esbuildTarget = target === 'firefox' ? 'firefox121' : 'chrome120';
 
 async function copyDir(src, dest) {
   await fs.mkdir(dest, { recursive: true });
@@ -35,14 +43,14 @@ async function main() {
   await fs.rm(outDir, { recursive: true, force: true });
   await copyDir(webDist, outDir);
 
-  // Bundle MV3 service worker + extension bootstrap script
+  // Bundle MV3 service worker / background script + extension bootstrap script
   await Promise.all([
     esbuild.build({
       entryPoints: [path.join(extRoot, 'src', 'sw.ts')],
       bundle: true,
       format: 'esm',
       platform: 'browser',
-      target: 'chrome120',
+      target: esbuildTarget,
       sourcemap: true,
       outfile: path.join(outDir, 'sw.js'),
     }),
@@ -51,7 +59,7 @@ async function main() {
       bundle: true,
       format: 'esm',
       platform: 'browser',
-      target: 'chrome120',
+      target: esbuildTarget,
       sourcemap: true,
       outfile: path.join(outDir, 'bootstrap.js'),
     }),
@@ -69,8 +77,8 @@ async function main() {
   }
   await fs.writeFile(indexHtmlPath, injected, 'utf-8');
 
-  // Copy manifest.json and GETTING_STARTED.md
-  await fs.copyFile(path.join(extRoot, 'manifest.json'), path.join(outDir, 'manifest.json'));
+  // Copy target manifest as manifest.json and GETTING_STARTED.md
+  await fs.copyFile(path.join(extRoot, manifestFile), path.join(outDir, 'manifest.json'));
   const guidePath = path.resolve(extRoot, '..', '..', 'docs', 'GETTING_STARTED.md');
   try {
     await fs.copyFile(guidePath, path.join(outDir, 'GETTING_STARTED.md'));
@@ -78,7 +86,8 @@ async function main() {
     // optional
   }
 
-  console.log(`Built unpacked Chrome MV3 extension at ${outDir}`);
+  const label = target === 'firefox' ? 'Firefox' : 'Chrome';
+  console.log(`Built unpacked ${label} MV3 extension at ${outDir}`);
 }
 
 main().catch((err) => {

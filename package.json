@@ -11,6 +11,7 @@
     "build": "pnpm --filter @velm/shared build && pnpm --filter @velm/core build && pnpm --filter @velm/web build && pnpm --filter @velm/desktop build && pnpm --filter @velm/extension build",
     "build:desktop": "pnpm --filter @velm/web build && pnpm --filter @velm/desktop build",
     "build:extension": "pnpm --filter @velm/web build && pnpm --filter @velm/extension build",
+    "build:extension:firefox": "pnpm --filter @velm/web build && pnpm --filter @velm/extension build:firefox",
     "mock:download": "pnpm --filter @velm/web exec tsx ../../scripts/download-mock-data.ts",
     "remote:menu": "bash scripts/codespaces-launch.sh",
     "lint": "pnpm -r lint",
