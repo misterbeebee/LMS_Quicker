@@ -19,6 +19,9 @@ import {
   Edit3
 } from 'lucide-react';
 import { TACTICAL_PROMPTS, TacticalPromptOption } from '../../services/gemini';
+import type { LlmProviderConfig } from '@velm/core';
+import { getSavedLlmConfig, isLocalRuntime } from '../../services/backend';
+import { AiProviderSettingsModal } from './AiProviderSettingsModal';
 
 interface AnalysisPanelProps {
   analysis: string | null;
@@ -51,6 +54,11 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
 
   const [selectedModel, setSelectedModel] = useState('gemini-3.8-flash');
   const [copied, setCopied] = useState(false);
+  const [showProviderModal, setShowProviderModal] = useState(false);
+  const [localLlmConfig, setLocalLlmConfig] = useState<LlmProviderConfig | null>(() =>
+    getSavedLlmConfig()
+  );
+  const localMode = isLocalRuntime();
 
   const activePreset = TACTICAL_PROMPTS.find(p => p.id === selectedPresetId);
 
@@ -77,7 +85,7 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
       ? `${goalPrompt}\n\nUSER FORMATTING & STYLE INSTRUCTIONS:\n${generalInstructions.trim()}`
       : goalPrompt;
 
-    onAnalyze(fullInstructions, selectedModel);
+    onAnalyze(fullInstructions, localMode ? undefined : selectedModel);
   };
 
   const handleCopyReport = async () => {
@@ -174,8 +182,26 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
           </div>
         </div>
         
-        {/* Right Action Bar: Settings, Run Button, and Top-Right Collapse Button */}
+        {/* Right Action Bar: AI Provider (local), Settings, Run Button, and Top-Right Collapse Button */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {localMode && (
+            <button
+              type="button"
+              onClick={() => setShowProviderModal(true)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition border flex items-center gap-1.5 cursor-pointer ${
+                localLlmConfig
+                  ? 'bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-50'
+                  : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+              }`}
+              title="Configure local or BYO-key AI provider"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span className="max-w-[140px] truncate">
+                {localLlmConfig ? localLlmConfig.label : 'Configure AI'}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setShowSettings(!showSettings)}
@@ -345,21 +371,47 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
             {/* Model Selection */}
             <div>
               <label className="text-xs font-bold text-indigo-800 uppercase tracking-wide mb-1.5 flex items-center gap-1">
-                <Cpu className="w-3 h-3" /> AI Model Version
+                <Cpu className="w-3 h-3" /> {localMode ? 'AI Provider & Model' : 'AI Model Version'}
               </label>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full p-2 text-xs border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-slate-700"
-                title="Select the AI model for analysis"
-              >
-                {AVAILABLE_MODELS.map(model => (
-                  <option key={model.id} value={model.id}>{model.name}</option>
-                ))}
-              </select>
-              <p className="text-[10px] text-slate-500 mt-1">
-                Gemini 3.8 Flash delivers fast, high-reasoning academic insights.
-              </p>
+              {localMode ? (
+                <div className="space-y-2">
+                  <div className="p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/40 text-xs">
+                    {localLlmConfig ? (
+                      <>
+                        <div className="font-bold text-indigo-950">{localLlmConfig.label}</div>
+                        <div className="text-[11px] text-slate-600 font-mono truncate">
+                          {localLlmConfig.model}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-amber-900 font-medium">No AI provider configured yet.</div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowProviderModal(true)}
+                    className="w-full px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition cursor-pointer"
+                  >
+                    {localLlmConfig ? 'Change AI Provider...' : 'Configure AI Provider...'}
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full p-2 text-xs border border-indigo-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white text-slate-700"
+                    title="Select the AI model for analysis"
+                  >
+                    {AVAILABLE_MODELS.map(model => (
+                      <option key={model.id} value={model.id}>{model.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Gemini 3.8 Flash delivers fast, high-reasoning academic insights.
+                  </p>
+                </>
+              )}
             </div>
 
             {/* General Custom Instructions (Tone, Formatting, Bullet lists) */}
@@ -441,6 +493,14 @@ export const AnalysisPanel: React.FC<AnalysisPanelProps> = ({ analysis, analyzin
             dangerouslySetInnerHTML={{ __html: analysis }}
           />
         </div>
+      )}
+
+      {localMode && (
+        <AiProviderSettingsModal
+          isOpen={showProviderModal}
+          onClose={() => setShowProviderModal(false)}
+          onConfigSaved={(cfg) => setLocalLlmConfig(cfg)}
+        />
       )}
     </div>
   );

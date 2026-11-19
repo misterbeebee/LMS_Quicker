@@ -38,6 +38,7 @@ import {
   StudentVueGradebookSnapshot,
 } from '../../services/studentvueGrades';
 import { logger } from '../../services/logger';
+import { isLocalRuntime } from '../../services/backend';
 
 interface StudentVueVerifyModalProps {
   isOpen: boolean;
@@ -464,7 +465,15 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
             </div>
           </div>
 
-          {/* API Server Connection Section */}
+          {/* API Server Connection Section (hosted mode only) */}
+          {isLocalRuntime() ? (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <strong>Direct Local Connection:</strong> connects directly from this device to your district&apos;s Synergy server (no middleware server).
+              </span>
+            </div>
+          ) : (
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <button
               type="button"
@@ -550,6 +559,7 @@ export const StudentVueVerifyModal: React.FC<StudentVueVerifyModalProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Outcome Display */}
           {outcome && !outcome.ok && (

@@ -31,6 +31,7 @@ import {
   StudentVueGradebookSnapshot,
   syncStudentVueGradebook,
 } from '../../services/studentvueGrades';
+import { isLocalRuntime } from '../../services/backend';
 
 interface StudentVueGradeSyncModalProps {
   isOpen: boolean;
@@ -409,7 +410,15 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
             </div>
           </div>
 
-          {/* API Server Auth */}
+          {/* API Server Auth (hosted mode only) */}
+          {isLocalRuntime() ? (
+            <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                <strong>Direct Local Connection:</strong> connects directly from this device to your district&apos;s Synergy server (no middleware server).
+              </span>
+            </div>
+          ) : (
           <div className="border border-slate-200 rounded-xl overflow-hidden">
             <button
               type="button"
@@ -494,6 +503,7 @@ export const StudentVueGradeSyncModal: React.FC<StudentVueGradeSyncModalProps> =
               </div>
             )}
           </div>
+          )}
 
           {/* Feedback messages */}
           {syncError && (
