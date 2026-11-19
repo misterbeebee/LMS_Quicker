@@ -1,0 +1,23 @@
+{
+  "name": "@velm/extension",
+  "private": true,
+  "version": "1.8.0",
+  "type": "module",
+  "description": "Velm Chrome / Chromebook MV3 Extension (Developer Mode unpacked build)",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "build": "node scripts/build-extension.mjs"
+  },
+  "dependencies": {
+    "@velm/core": "workspace:*",
+    "@velm/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.318",
+    "@types/node": "^22.14.0",
+    "esbuild": "^0.27.4",
+    "typescript": "~5.8.2",
+    "vitest": "^5.1.0"
+  }
+}

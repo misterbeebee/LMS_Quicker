@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Velm — Local Academic Dashboard",
+  "version": "1.8.0",
+  "description": "Local-first Canvas LMS & StudentVUE dashboard running 100% in your browser with zero cloud servers.",
+  "action": {
+    "default_title": "Open Velm Dashboard"
+  },
+  "background": {
+    "service_worker": "sw.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "sidePanel"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
