@@ -213,7 +213,6 @@ export const analyzeWorkload = async (
       activeStudent?.name,
       linkedSvue?.studentName,
       linkedSvue?.permId,
-      linkedSvue?.edupointUsername,
     ];
     const studentIdentifiersToRedact = Array.from(
       new Set(
