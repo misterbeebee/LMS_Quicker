@@ -86,6 +86,14 @@ sudo apt install ./Velm-*-linux-x64.deb
 6. **Multiple Students in the Chrome Extension:** Chrome extensions share one cookie jar per Chrome profile. To track multiple students with StudentVUE, create a **separate Chrome profile per student** and load Velm in each profile. *(The Desktop app supports multiple students in one window with isolated cookie partitions.)*
 7. **Updating the Extension:** Download the new zip, extract it over your existing permanent folder, then click the **Reload** icon on Velm in `chrome://extensions`.
 
+### Firefox Extension (Desktop — Temporary / Unpacked)
+
+1. Download `velm-extension-firefox-<version>.zip` from GitHub Releases and unzip it to a folder.
+2. Open Firefox (`121+`) and navigate to `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and select `manifest.json` inside the unzipped folder.
+4. Click the Velm icon in your toolbar to open the dashboard. *(Temporary add-ons stay loaded until Firefox restarts; signed Mozilla AMO distribution is planned for a future release.)*
+5. **Multiple Students:** Just like Chrome, use a separate Firefox profile (or Firefox Multi-Account Container) per student.
+
 ---
 
 ## 4. First-Run Setup
@@ -94,14 +102,17 @@ sudo apt install ./Velm-*-linux-x64.deb
    - Enter your school's Canvas domain (e.g., `school.instructure.com`).
    - Generate a **Canvas Personal Access Token** in Canvas under *Account → Settings → Approved Integrations → + New Access Token* and paste it into Velm.
 2. **StudentVUE / ParentVUE (Optional):**
-   - Click **Link StudentVUE** or **Sync Grades** in the dashboard.
+   - Click **Verify StudentVUE** or **Sync Official Grades** in the student menu.
    - Select or type your district's Edupoint Synergy domain (e.g., `md-mcps-psv.edupoint.com`) and enter your StudentVUE or ParentVUE credentials.
+   - **SSO Districts (Browser Extension):** If your school uses Google/Microsoft/Clever SSO for StudentVUE, sign into StudentVUE in another browser tab first, then check **"Reuse open StudentVUE/ParentVUE tab (for SSO districts)"** inside Velm — no password entry required.
    - Velm connects directly to your district's Synergy SOAP/PXP2 endpoint from your device — no middleware server is needed.
 3. **AI Academic Advisor (Optional — Off by Default):**
    - Open the **AI Academic Advisor** and click **Configure AI**.
    - **Most Private (On-Device):** Install [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) on your computer and click **Detect Local AI** — student data never leaves your machine.
    - **Bring Your Own Cloud Key:** Connect OpenAI, Anthropic, Google Gemini, OpenRouter, or Mistral with your own API key (stored in your OS keychain / encrypted store).
    - **Reputable Free Tiers:** Groq, GitHub Models, or OpenRouter `:free` models (requires a free account key). Note that free tiers may log prompts — keep **"Minimize student data"** enabled to redact emails and student IDs before prompts leave your device.
+4. **Offline Preview / Mock JSON Mode (Optional):**
+   - On the Login screen, click **Demo** for built-in sample data, or **Mock JSON** to load a local `velm-mock-store.v1.json` snapshot completely offline (zero network requests).
 
 ---
 
@@ -112,7 +123,7 @@ Velm stores your settings, cached grades, and encrypted API keys strictly on you
 - **macOS:** `~/Library/Application Support/Velm/` (API keys encrypted via macOS Keychain / `safeStorage`)
 - **Windows:** `%APPDATA%\Velm\` (API keys encrypted via Windows DPAPI / `safeStorage`)
 - **Linux:** `~/.config/Velm/` (API keys encrypted via Secret Service / KWallet / `safeStorage`)
-- **Chrome Extension:** Chrome profile's extension local storage (`chrome.storage.local`)
+- **Chrome / Firefox Extension:** Browser profile's extension local storage (`chrome.storage.local` / WebCrypto AES-GCM)
 
 To wipe all Velm data:
 - Use **Remove Student** / **Clear Saved Data** inside the app, or
@@ -126,5 +137,6 @@ To wipe all Velm data:
 - **Windows:** Uninstall **Velm** via *Settings → Apps → Installed apps*, and optionally delete `%APPDATA%\Velm\`.
 - **Linux:** Delete the `.AppImage` file (or `sudo apt remove velm`), and optionally delete `~/.config/Velm/`.
 - **Chrome Extension:** Open `chrome://extensions`, click **Remove** on Velm, and delete the unzipped extension folder.
+- **Firefox Extension:** Open `about:debugging#/runtime/this-firefox`, click **Remove** on Velm (or restart Firefox), and delete the unzipped folder.
 
 **Reporting Bugs:** Open an issue on GitHub. Before pasting any console logs, double-check that no Canvas access tokens, passwords, or student names appear in your report (Velm automatically redacts tokens and passwords in its built-in logger, but always verify before posting publicly).
