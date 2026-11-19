@@ -1,0 +1,27 @@
+{
+  "name": "@velm/core",
+  "private": true,
+  "version": "1.8.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "test:unit": "vitest run"
+  },
+  "dependencies": {
+    "@velm/shared": "workspace:*",
+    "cheerio": "^1.2.0",
+    "fast-xml-parser": "^5.12.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.2",
+    "vitest": "^5.1.0"
+  }
+}

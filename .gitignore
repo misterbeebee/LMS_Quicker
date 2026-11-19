@@ -9,13 +9,16 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-firefox
 dist-ssr
+release
 *.local
 
 # Environment variables and secrets
 .env
 .env.*
 !.env.example
+velm-mock-store*.json
 
 # Editor directories and files
 .vscode/*

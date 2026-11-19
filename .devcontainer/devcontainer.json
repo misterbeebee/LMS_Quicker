@@ -1,0 +1,28 @@
+{
+  "name": "Velm Local Dev (Desktop + Chrome Extension via noVNC)",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/desktop-lite:1": {
+      "version": "latest",
+      "webPort": "6080",
+      "vncPort": "5901"
+    }
+  },
+  "forwardPorts": [3000, 6080],
+  "portsAttributes": {
+    "3000": {
+      "label": "Velm Web Dev Server",
+      "onAutoForward": "notify"
+    },
+    "6080": {
+      "label": "Desktop noVNC (Open in Browser for Electron & Chrome)",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y --no-install-recommends chromium libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 && corepack enable && corepack prepare pnpm@12.21.0 --activate && pnpm install",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}

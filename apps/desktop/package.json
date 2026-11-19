@@ -1,0 +1,28 @@
+{
+  "name": "@velm/desktop",
+  "private": true,
+  "version": "1.8.0",
+  "description": "Velm local desktop app (Electron) — Canvas LMS & StudentVUE dashboard with zero cloud servers",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "test:unit": "vitest run",
+    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --external:electron --sourcemap --outfile=dist/main.cjs && esbuild src/preload.ts --bundle --platform=node --format=cjs --external:electron --sourcemap --outfile=dist/preload.cjs",
+    "start": "pnpm --filter @velm/web build && pnpm run build && electron .",
+    "dist:mac": "pnpm --filter @velm/web build && pnpm run build && electron-builder --mac --config electron-builder.yml",
+    "dist:win": "pnpm --filter @velm/web build && pnpm run build && electron-builder --win --config electron-builder.yml",
+    "dist:linux": "pnpm --filter @velm/web build && pnpm run build && electron-builder --linux --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@velm/core": "workspace:*",
+    "@velm/shared": "workspace:*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "electron": "^35.2.1",
+    "esbuild": "^0.27.4",
+    "typescript": "~5.8.2",
+    "vitest": "^5.1.0"
+  }
+}
