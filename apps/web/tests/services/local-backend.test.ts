@@ -20,6 +20,8 @@ import {
 import { checkSchoolviewAuthRequired, verifyStudentVueAccount } from '../../services/studentvue';
 import { syncStudentVueGradebook } from '../../services/studentvueGrades';
 import { analyzeWorkload } from '../../services/gemini';
+import { getFileFromCanvas, saveFileToCanvas } from '../../services/canvas';
+import { translateTextWithFreeApi } from '../../services/translation';
 
 function makeHeaders(map: Record<string, string>): HttpHeaders {
   const lower = new Map<string, string>();
@@ -447,6 +449,72 @@ describe('Local VelmBackend UI bridge (M2.2)', () => {
         accountId: 'student_maya_1',
         reuseExistingSession: true,
       })
+    );
+  });
+
+  it('serializes FormData uploads in installLocalBackendFetchBridge for /saves round-trip and proxies translation calls', async () => {
+    const fixture = {
+      version: 1,
+      recordedAt: '2026-01-15T12:00:00.000Z',
+      sanitized: true,
+      canvas: {
+        domain: 'mock.instructure.com',
+        self: { id: 99, name: 'Alex Sample' },
+        profile: { id: 99, name: 'Alex Sample' },
+        courses: [],
+        courseNicknames: [],
+        todo: [],
+        upcomingEvents: [],
+        announcements: [],
+        courseDetailsById: {},
+        enrollmentsByCourseId: {},
+        assignmentsByCourseId: {},
+        assignmentGroupsByCourseId: {},
+        modulesByCourseId: {},
+      },
+      scrapeErrors: {},
+    };
+
+    loadMockDatastoreJson(JSON.stringify(fixture));
+
+    const payload = { version: 2, completedIds: [101, 202], notes: { '101': 'Reviewed' } };
+    const savedOk = await saveFileToCanvas(
+      'mock.instructure.com',
+      'mock-token',
+      'velm_data.json',
+      JSON.stringify(payload),
+      true
+    );
+    expect(savedOk).toBe(true);
+
+    const loadedRaw = await getFileFromCanvas(
+      'mock.instructure.com',
+      'mock-token',
+      'velm_data.json',
+      true
+    );
+    expect(JSON.parse(loadedRaw)).toEqual(payload);
+
+    // Also verify translateTextWithFreeApi routes through /api/proxy when local backend is active
+    const proxyRequests: string[] = [];
+    const translationBackend = createLocalBackend({
+      platform: 'desktop',
+      version: '1.8.0-test',
+      transport: makeMockTransport((req) => {
+        proxyRequests.push(req.url);
+        return jsonResponse(req.url, {
+          responseData: { translatedText: 'Hello world' },
+        });
+      }),
+      secretStore: createMemorySecretStore(),
+    });
+    installLocalBackendFetchBridge(translationBackend);
+
+    const translated = await translateTextWithFreeApi('Bonjour le monde', 'fr');
+    expect(translated.success).toBe(true);
+    expect(translated.translation).toBe('Hello world');
+    expect(proxyRequests.some((u) => u.startsWith('https://api.mymemory.translated.net/get?'))).toBe(
+      true
     );
   });
 });

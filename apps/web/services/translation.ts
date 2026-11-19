@@ -303,7 +303,11 @@ export async function translateTextWithFreeApi(
   const langpair = `${sourceLang === 'auto' ? 'autodetect' : sourceLang}|${targetLang}`;
 
   try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(segment)}&langpair=${encodeURIComponent(langpair)}`;
+    const rawUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(segment)}&langpair=${encodeURIComponent(langpair)}`;
+    const url =
+      typeof window !== 'undefined' && (window as unknown as { __VELM_BACKEND__?: unknown }).__VELM_BACKEND__
+        ? `/api/proxy?url=${encodeURIComponent(rawUrl)}`
+        : rawUrl;
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Translation API returned status ${response.status}`);

@@ -240,6 +240,35 @@ export function installLocalBackendFetchBridge(backend: VelmBackend): void {
         body = init.body;
       } else if (init?.body instanceof URLSearchParams) {
         body = init.body.toString();
+        if (!headers['Content-Type'] && !headers['content-type']) {
+          headers['Content-Type'] = 'application/x-www-form-urlencoded;charset=UTF-8';
+        }
+      } else if (typeof FormData !== 'undefined' && init?.body instanceof FormData) {
+        const boundary = `----VelmFormBoundary${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+        const parts: string[] = [];
+        for (const [key, val] of init.body.entries()) {
+          const safeKey = key.replace(/"/g, '%22');
+          if (typeof val === 'string') {
+            parts.push(
+              `--${boundary}\r\nContent-Disposition: form-data; name="${safeKey}"\r\n\r\n${val}\r\n`
+            );
+          } else {
+            const filename = (typeof (val as File).name === 'string' && (val as File).name
+              ? (val as File).name
+              : 'blob'
+            ).replace(/"/g, '%22');
+            const mime = val.type || 'application/octet-stream';
+            const textContent = await val.text();
+            parts.push(
+              `--${boundary}\r\nContent-Disposition: form-data; name="${safeKey}"; filename="${filename}"\r\nContent-Type: ${mime}\r\n\r\n${textContent}\r\n`
+            );
+          }
+        }
+        parts.push(`--${boundary}--\r\n`);
+        body = parts.join('');
+        delete headers['Content-Type'];
+        delete headers['content-type'];
+        headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
       }
 
       const proxyRes = await activeBackend.httpRequest({

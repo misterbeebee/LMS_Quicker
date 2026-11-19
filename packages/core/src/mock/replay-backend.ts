@@ -33,6 +33,8 @@ export function createMockDatastoreBackend(
   const platform: PlatformTarget = options.platform ?? 'desktop';
   const secrets = createMemorySecretStore();
   const readAnnouncementIds = new Set<string>();
+  const mockSavedFiles = new Map<string, { id: number; filename: string; content: string; createdAt: string }>();
+  let nextMockFileId = 90001;
 
   async function handleCanvasHttp(req: RawHttpProxyRequest): Promise<RawHttpProxyResponse> {
     const canvas = store.canvas;
@@ -64,6 +66,80 @@ export function createMockDatastoreBackend(
     }
     if (pathname === '/api/v1/users/self/upcoming_events') {
       return jsonProxyResponse(req.url, canvas.upcomingEvents);
+    }
+
+    // 1b. Canvas personal folders & files (/saves workspace persistence)
+    if (pathname.startsWith('/api/v1/users/self/folders/by_path/')) {
+      const folderName = pathname.split('/').filter(Boolean).pop() ?? 'saves';
+      return jsonProxyResponse(req.url, [
+        {
+          id: 7001,
+          name: folderName,
+          files_url: `https://${canvas.domain}/api/v1/folders/7001/files`,
+        },
+      ]);
+    }
+    if (pathname === '/api/v1/users/self/folders' && req.method === 'POST') {
+      return jsonProxyResponse(req.url, {
+        id: 7001,
+        name: 'saves',
+        files_url: `https://${canvas.domain}/api/v1/folders/7001/files`,
+      });
+    }
+    if (pathname === '/api/v1/users/self/files' && req.method === 'POST') {
+      const nameMatch = req.body?.match(/name="name"\r?\n\r?\n([^\r\n]+)/);
+      const filename = nameMatch?.[1]?.trim() || `save-${Date.now()}.json`;
+      return jsonProxyResponse(req.url, {
+        upload_url: `https://${canvas.domain}/api/v1/mock_upload/${encodeURIComponent(filename)}`,
+        upload_params: { filename },
+      });
+    }
+    const uploadMatch = pathname.match(/^\/api\/v1\/mock_upload\/(.+)$/);
+    if (uploadMatch && req.method === 'POST') {
+      const filename = decodeURIComponent(uploadMatch[1] ?? 'save.json');
+      const filePartMatch = req.body?.match(/filename="[^"]+"\r?\nContent-Type:[^\r\n]+\r?\n\r?\n([\s\S]*?)\r?\n--/);
+      const content = filePartMatch?.[1] ?? req.body ?? '{}';
+      const existing = mockSavedFiles.get(filename);
+      const id = existing?.id ?? nextMockFileId++;
+      mockSavedFiles.set(filename, {
+        id,
+        filename,
+        content,
+        createdAt: new Date().toISOString(),
+      });
+      return jsonProxyResponse(req.url, { id, display_name: filename, filename });
+    }
+    if (pathname === '/api/v1/folders/7001/files') {
+      const list = Array.from(mockSavedFiles.values()).map((f) => ({
+        id: f.id,
+        display_name: f.filename,
+        filename: f.filename,
+        created_at: f.createdAt,
+        url: `https://${canvas.domain}/api/v1/mock_file_content/${encodeURIComponent(f.filename)}?verifier=mock`,
+      }));
+      return jsonProxyResponse(req.url, list);
+    }
+    const fileContentMatch = pathname.match(/^\/api\/v1\/mock_file_content\/(.+)$/);
+    if (fileContentMatch) {
+      const filename = decodeURIComponent(fileContentMatch[1] ?? '');
+      const saved = mockSavedFiles.get(filename);
+      return saved
+        ? {
+            status: 200,
+            ok: true,
+            url: req.url,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            text: saved.content,
+          }
+        : jsonProxyResponse(req.url, { error: 'File not found' }, 404);
+    }
+    const deleteFileMatch = pathname.match(/^\/api\/v1\/files\/(\d+)$/);
+    if (deleteFileMatch && req.method === 'DELETE') {
+      const idToDel = Number(deleteFileMatch[1]);
+      for (const [k, v] of mockSavedFiles.entries()) {
+        if (v.id === idToDel) mockSavedFiles.delete(k);
+      }
+      return jsonProxyResponse(req.url, { deleted: true });
     }
 
     // 2. Courses list
